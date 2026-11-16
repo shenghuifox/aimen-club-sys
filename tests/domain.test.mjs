@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {seed,demoAction} from '../src/demo.js';
+import {dateKey,weekDays,addDays,settlementPreview,csvString} from '../src/domain.js';
+import {reportHtml} from '../src/reports.js';
+test('臺灣跨日與週界線',()=>{assert.equal(dateKey(new Date('2026-11-15T16:30:00Z')),'2026-11-16');assert.deepEqual(weekDays('2026-11-22'),['2026-11-16','2026-11-17','2026-11-18','2026-11-19','2026-11-20','2026-11-21','2026-11-22']);});
+test('學生請假待覆核；導師可直接登記',()=>{const d=seed(),p={student_id:'s1',session_id:'session-0',kind:'事假',reason:'測試'};const student=demoAction(d,d.users[1],'leave',p);assert.equal(student.leaves[0].status,'pending');const teacher=demoAction(d,d.users[3],'leave',p);assert.equal(teacher.leaves[0].status,'approved');assert.throws(()=>demoAction(student,d.users[1],'review_leave',{id:student.leaves[0].id,status:'approved'}));});
+test('未完成點名不能核銷；跨期不可重複',()=>{const d=seed(),m=weekDays(dateKey())[0];assert.throws(()=>settlementPreview(d,'football',m,addDays(m,6)));const p={club_id:'football',start_date:addDays(m,-7),end_date:addDays(m,-1)};const done=demoAction(d,d.users[0],'settle',p);assert.equal(done.settlements[0].snapshot.total,800);assert.equal(done.settlements[0].snapshot.rows[0].attendance_count,2);assert.throws(()=>demoAction(done,d.users[0],'settle',p));});
+test('多位教師按費率彙總，模板安全與簽章欄齊全',()=>{const d=seed(),s=d.sessions.at(-1);d.sessions.push({...s,id:'extra',teacher_id:'hrtr',rate:350,summary:'<script>alert(1)</script>'});const date=dateKey(new Date(s.starts_at)),snapshot=settlementPreview(d,'football',date,date);assert.equal(snapshot.teachers.length,2);assert.equal(snapshot.total,1500);const html=reportHtml(snapshot,'sign');assert.ok(html.includes('承辦人確認後核章'));assert.ok(html.includes('出席學生數'));assert.ok(html.includes('紙本親簽'));assert.ok(!html.includes('<script>alert(1)</script>'));});
+test('管理者保底及 CSV 公式防注入',()=>{const d=seed();assert.throws(()=>demoAction(d,d.users[0],'roles',{id:'admin',roles:['stu']}));assert.ok(csvString([['=SUM(A1:A2)']]).includes("'=SUM"));});
