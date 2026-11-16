@@ -1,4 +1,5 @@
 import {addDays,dateKey,weekDays,settlementPreview,has,enrolledOn,intersects} from './domain.js';
+import {recurringPreview} from './recurrence.js';
 export function seed(){
  const monday=weekDays(dateKey())[0], term='term-115-1';
  const users=[{id:'admin',username:'admin',name:'行政測試',roles:['admin']},{id:'stu',username:'stu',name:'學生測試',roles:['stu']},{id:'clubtr',username:'clubtr',name:'社團老師測試',roles:['clubtr']},{id:'hrtr',username:'hrtr',name:'班級導師測試',roles:['hrtr']}];
@@ -17,7 +18,16 @@ export function demoAction(data,user,action,p){
  const manageStudent=s=>s&&(isAdmin||s.homeroom_id===user.id||s.user_id===user.id||d.enrollments.some(e=>e.student_id===s.id&&d.clubs.find(c=>c.id===e.club_id)?.teacher_id===user.id));
  const unlocked=(cid,date)=>{if(d.settlements.some(b=>b.club_id===cid&&date>=b.start_date&&date<=b.end_date))fail('該期間已鎖定，請走核銷更正流程。');};
  const termOpen=cid=>{if(d.terms.find(t=>t.id===d.clubs.find(c=>c.id===cid)?.term_id)?.status!=='active')fail('學期已封存。');};
- if(action==='leave'){
+ if(action==='batch_sessions'){
+  requireAdmin();if(!club)fail('請選擇社團。');termOpen(club.id);const rows=recurringPreview(d,p);if(rows.some(r=>r.result==='conflict'))fail('批次包含衝突，未新增任何課程。');
+  rows.filter(r=>r.result==='new').forEach(r=>d.sessions.push({...r,id:id(),summary:'',status:'scheduled',signed_at:null,attendance_confirmed_at:null}));
+ }else if(action==='update_student'){
+  requireAdmin();const target=d.students.find(s=>s.id===p.id);if(!target)fail('學生名冊不存在。');if(d.terms.find(t=>t.id===target.term_id)?.status!=='active')fail('學期已封存。');
+  if(!p.name?.trim()||!p.class_name?.trim()||!p.number?.trim())fail('姓名、班級、座號不可空白。');
+  if(p.user_id&&!d.users.some(u=>u.id===p.user_id&&has(u,'stu')))fail('請選擇學生帳號。');if(p.homeroom_id&&!d.users.some(u=>u.id===p.homeroom_id&&has(u,'hrtr')))fail('請選擇導師帳號。');
+  if(p.user_id&&d.students.some(s=>s.id!==target.id&&s.term_id===target.term_id&&s.user_id===p.user_id))fail('此帳號已綁定本學期其他學生。');
+  Object.assign(target,{name:p.name.trim(),class_name:p.class_name.trim(),number:p.number.trim(),user_id:p.user_id||null,homeroom_id:p.homeroom_id||null});
+ }else if(action==='leave'){
   if(!student||!session||!manageStudent(student))fail('沒有這位學生或課程的操作權限。');
   termOpen(session.club_id);
   if(!['公假','事假','病假'].includes(p.kind)||!p.reason?.trim())fail('請填寫假別與事由。');
