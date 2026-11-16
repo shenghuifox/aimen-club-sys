@@ -63,6 +63,27 @@ export function demoAction(data,user,action,p){
   if(!club||(!isAdmin&&club.teacher_id!==user.id))fail('沒有異動權限。');termOpen(club.id);if(!p.reason?.trim())fail('請填寫異動原因。');
   const change={id:id(),...p,status:isAdmin?'approved':'pending',created_by:user.id,created_at:now};
   if(isAdmin)applyChange(d,change,unlocked);d.changes.push(change);
+ }else if(action==='edit_change'){
+  const c=d.changes.find(x=>x.id===p.id),cClub=d.clubs.find(x=>x.id===c?.club_id);
+  if(!c||(!isAdmin&&!(c.created_by===user.id&&cClub?.teacher_id===user.id&&has(user,'clubtr'))))fail('沒有編修此異動的權限。');termOpen(c.club_id);
+  if(Number(p.expected_revision)!==(c.revision||1))fail('紀錄已更新，請重新整理。');if(d.changes.some(x=>x.supersedes_id===c.id&&['pending','approved'].includes(x.status)))fail('已有修訂，請編修最新版本。');
+  if(!p.reason?.trim())fail('請填寫原因。');
+  const before=structuredClone(c);delete before.edit_history;
+  const history=[...(c.edit_history||[]),{edited_at:now,edited_by:user.id,before}];
+  if(c.status==='approved'&&['add_student','remove_student'].includes(c.kind)){
+   if((p.student_id!=null&&p.student_id!==c.student_id)||(p.effective_date!=null&&p.effective_date!==c.effective_date))fail('已生效學生增退僅可編修說明，名單調整請新增異動。');
+   if(d.settlements.some(b=>b.club_id===c.club_id&&b.end_date>=c.effective_date))fail('涉及核銷鎖定期間。');c.reason=p.reason;c.revision=(c.revision||1)+1;c.edit_history=history;
+  }else{
+   if((p.club_id&&p.club_id!==c.club_id)||(p.kind&&p.kind!==c.kind))fail('不可更換社團或異動類型。');
+   if(['reschedule','weekly'].includes(c.kind)){
+    if(c.status==='approved'&&p.session_id!==c.session_id)fail('不可更換已確認的原課程。');
+    const source=d.sessions.find(s=>s.id===p.session_id&&s.club_id===c.club_id);if(!source||source.status!=='scheduled'||source.signed_at)fail('請選擇尚未簽到的待上課節次。');
+    unlocked(c.club_id,dateKey(new Date(source.starts_at)));unlocked(c.club_id,dateKey(new Date(p.starts_at)));if(!(new Date(p.ends_at)>new Date(p.starts_at))||!(Number(p.units)>0))fail('時間或節數不正確。');
+   }
+   const fields={reason:p.reason,student_id:p.student_id||null,effective_date:p.effective_date||null,session_id:p.session_id||null,starts_at:p.starts_at||null,ends_at:p.ends_at||null,teacher_id:p.teacher_id||null,units:p.units||null,rate:p.rate??null};
+   if(c.status==='pending')Object.assign(c,fields,{revision:(c.revision||1)+1,edit_history:history});
+   else {const next={...c,...fields,id:id(),created_by:user.id,created_at:now,status:isAdmin?'approved':'pending',supersedes_id:c.id,revision:1,edit_history:[history.at(-1)]};if(isAdmin)applyChange(d,next,unlocked);d.changes.push(next);}
+  }
  }else if(action==='review_change'){
   requireAdmin();const c=d.changes.find(x=>x.id===p.id);if(!c||c.status!=='pending')fail('異動已處理。');termOpen(c.club_id);if(p.status==='approved')applyChange(d,c,unlocked);c.status=p.status;c.reviewed_by=user.id;
  }else if(action==='settle'){

@@ -12,7 +12,7 @@
 
 ## 第一次安裝 Supabase
 
-1. 在專案 eddaalutgxmanorbfrbm 的 SQL Editor，以管理者執行 `supabase/schemas/001_club.sql` **一次**，再執行 `supabase/schemas/002_recurring_and_student_binding.sql`。已安裝第一版者只需執行 002。此檔建立獨立的 club_private schema，不修改既有的中文資料表。
+1. 在專案 eddaalutgxmanorbfrbm 的 SQL Editor，以管理者依序執行 `supabase/schemas/001_club.sql` **一次**、`002_recurring_and_student_binding.sql`、`003_edit_changes.sql`。已安裝 0.2.0 者只需執行 003。升級不刪除既有資料。
 2. 在可信任的本機環境設定 `SUPABASE_SECRET_KEY`（伺服器 secret / legacy service_role key），執行 `node scripts/bootstrap.mjs`。金鑰不應貼在聊天、放入 VITE_ 變數或提交 GitHub。
 3. 建立後，四個帳號的隨機密碼會保存到本機 `credentials-test-accounts.json`（已加入 gitignore）。帳號會映射成 `帳號@test.aimen.invalid`。此網域僅用於獨立測試，不支援收信或自助重設。
 4. admin 登入後建立社團、上課節次、學生名冊，將 stu 綁定學生、hrtr 指定為導師。核對課程與權限後進行試辦。
@@ -29,6 +29,8 @@ Node 22 以上，pnpm 11.25.0。`pnpm install`、`pnpm test`、`pnpm test:db`、
 main 推送後，`.github/workflows/pages.yml` 執行單元與資料庫測試，再建置部署。GitHub Settings → Pages → Source 須選 GitHub Actions。
 
 ## 第一版範圍與限制
+
+0.3.0 更新：異動管理新增編修及歷史紀錄，已確認代調課以新修訂保留原紀錄；待覆核編修維持待覆核。詳見 `升級至0.3.0.md`。
 
 0.2.0 更新：本週課表及社團頁新增「批次新增週期課程」，提供日期區間、複選星期、時段、節數、教師、費率及排除日期。先預覽後整批交易新增；完全相同的課程略過，任何衝突則全批失敗。每批最多 200 次，不自動排除國定假日。
 

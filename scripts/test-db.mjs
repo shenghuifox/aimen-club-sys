@@ -5,6 +5,7 @@ const db=new PGlite();
 await db.exec(`create role anon;create role authenticated;create role service_role;create schema auth;create table auth.users(id uuid primary key);create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;grant usage on schema auth to authenticated;grant execute on function auth.uid() to authenticated;`);
 await db.exec(await fs.readFile(new URL('../supabase/schemas/001_club.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../supabase/schemas/002_recurring_and_student_binding.sql',import.meta.url),'utf8'));
+await db.exec(await fs.readFile(new URL('../supabase/schemas/003_edit_changes.sql',import.meta.url),'utf8'));
 const ids={admin:'00000000-0000-0000-0000-000000000001',stu:'00000000-0000-0000-0000-000000000002',clubtr:'00000000-0000-0000-0000-000000000003',hrtr:'00000000-0000-0000-0000-000000000004',other:'00000000-0000-0000-0000-000000000005'};
 for(const [role,id] of Object.entries(ids)){await db.query('insert into auth.users values($1)',[id]);await db.query('insert into club_private.users(id,username,name,roles) values($1,$2,$2,$3)',[id,role,[role==='other'?'stu':role]]);}
 const as=async(role)=>{await db.exec('reset role');await db.query("select set_config('request.jwt.claim.sub',$1,false)",[ids[role]||'']);await db.exec('set role '+(role==='anon'?'anon':'authenticated'));};
@@ -59,5 +60,29 @@ await check('行政綁定學生帳號、重複綁定與學生自改均阻擋',as
  await as('other');assert.equal((await snapshot()).students[0].id,sid2);
  await assert.rejects(()=>bind({id:sid2,name:'學生二',class_name:'四甲',number:'01',user_id:ids.stu}));
  await as('admin');await assert.rejects(()=>bind({id:sid2,name:'學生二',class_name:'四甲',number:'01',user_id:ids.stu}));
+});
+const edit=async p=>(await db.query('select public.club_edit_change($1) as result',[JSON.stringify(p)])).rows[0].result;
+let changeId,revisionId;let editPayload;
+await check('待覆核異動編修保留未確認並記錄歷史',async()=>{
+ await as('clubtr');d=await snapshot();const source=d.sessions.find(s=>s.starts_at.startsWith('2026-11-30'));
+ const result=await act('change',{club_id:cid,kind:'reschedule',session_id:source.id,starts_at:'2026-11-30T13:00:00+08:00',ends_at:'2026-11-30T13:40:00+08:00',teacher_id:ids.clubtr,units:1,rate:400,reason:'原申請'});changeId=result.id;
+ editPayload={id:changeId,expected_revision:1,session_id:source.id,starts_at:'2026-11-30T12:00:00+08:00',ends_at:'2026-11-30T12:40:00+08:00',teacher_id:ids.clubtr,units:1,rate:400,reason:'修改申請'};
+ await edit(editPayload);d=await snapshot();const c=d.changes.find(x=>x.id===changeId);assert.equal(c.status,'pending');assert.equal(c.revision,2);assert.equal(c.edit_history[0].before.reason,'原申請');
+ assert.equal(new Date(d.sessions.find(s=>s.id===source.id).starts_at).toISOString(),'2026-11-30T06:00:00.000Z');
+ await assert.rejects(()=>edit(editPayload));
+});
+await check('學生不可編修；已確認代調課以新版本生效',async()=>{
+ await as('stu');await assert.rejects(()=>edit({...editPayload,expected_revision:2}));
+ await as('admin');await act('review_change',{id:changeId,status:'approved'});
+ const result=await edit({...editPayload,expected_revision:2,starts_at:'2026-11-30T11:00:00+08:00',ends_at:'2026-11-30T11:40:00+08:00',reason:'行政修訂'});revisionId=result.id;assert.notEqual(revisionId,changeId);
+ d=await snapshot();const original=d.changes.find(c=>c.id===changeId),next=d.changes.find(c=>c.id===revisionId);assert.equal(original.reason,'修改申請');assert.equal(next.supersedes_id,changeId);assert.equal(next.status,'approved');assert.equal(new Date(d.sessions.find(s=>s.id===editPayload.session_id).starts_at).toISOString(),'2026-11-30T03:00:00.000Z');
+ await assert.rejects(()=>edit({...editPayload,expected_revision:2}));
+});
+await check('編修衝突整筆回滾，已授課或鎖定不可覆寫',async()=>{
+ const before=(await snapshot()).changes.length;
+ await assert.rejects(()=>edit({...editPayload,id:revisionId,expected_revision:1,starts_at:'2026-11-23T15:30:00+08:00',ends_at:'2026-11-23T16:10:00+08:00',reason:'撞課測試'}));
+ assert.equal((await snapshot()).changes.length,before);
+ await db.exec('reset role');await db.query("update club_private.sessions set signed_at=starts_at where id=$1",[editPayload.session_id]);await as('admin');
+ await assert.rejects(()=>edit({...editPayload,id:revisionId,expected_revision:1}));
 });
 await db.close();console.log(`${count} database security scenarios passed`);
