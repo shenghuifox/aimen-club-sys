@@ -205,7 +205,7 @@ begin
   perform club_private.assert_open((select club_id from club_private.sessions where id=l.session_id));
   update club_private.leaves set status=payload->>'status',reviewed_by=u.id,reviewed_at=now() where id=l.id;
  elsif action='enroll' then
-  if c.id is null or s.id is null or not(a or (s.user_id=u.id and 'stu'=any(u.roles))) or s.term_id<>c.term_id then raise exception '沒有報名權限'; end if;
+  if c.id is null or s.id is null or not coalesce((a or (s.user_id=u.id and 'stu'=any(u.roles))),false) or s.term_id<>c.term_id then raise exception '沒有報名權限'; end if;
   perform club_private.assert_open(c.id);
   if not a and (c.status<>'published' or d not between c.registration_start and c.registration_end) then raise exception '目前不在報名期間'; end if;
   insert into club_private.enrollments(club_id,student_id,status,start_date) values(c.id,s.id,'pending',d) returning id into out_id;

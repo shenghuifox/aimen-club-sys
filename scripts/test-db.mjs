@@ -26,6 +26,14 @@ await check('學生只能讀自己名冊，不能升權、越權查表',async()=
 await check('報名與錄取、防止重複及超收',async()=>{await act('enroll',{club_id:cid,student_id:sid});await assert.rejects(()=>act('enroll',{club_id:cid,student_id:sid}));await as('admin');d=await snapshot();await act('admit',{id:d.enrollments[0].id,status:'enrolled',start_date:'2026-08-01'});await act('enroll',{club_id:cid,student_id:sid2});d=await snapshot();await assert.rejects(()=>act('admit',{id:d.enrollments.find(e=>e.student_id===sid2).id,status:'enrolled',start_date:'2026-08-01'}));});
 await check('學生申請需覆核，學生不能自我覆核',async()=>{await as('stu');await act('leave',{session_id:seid,student_id:sid,kind:'事假',reason:'測試'});d=await snapshot();assert.equal(d.leaves[0].status,'pending');await assert.rejects(()=>act('review_leave',{id:d.leaves[0].id,status:'approved'}));await as('hrtr');await act('review_leave',{id:d.leaves[0].id,status:'approved'});d=await snapshot();assert.equal(d.leaves[0].status,'approved');});
 await check('教師不可替別的班級未參與學生請假',async()=>{await as('clubtr');await assert.rejects(()=>act('leave',{session_id:seid,student_id:sid2,kind:'事假',reason:'測試'}));});
+await check('未綁定帳號與導師時仍拒絕越權',async()=>{
+ await db.exec('reset role');
+ await db.query('update club_private.students set user_id=null,homeroom_id=null where id=$1',[sid2]);
+ await as('stu');await assert.rejects(()=>act('enroll',{club_id:cid,student_id:sid2}));
+ await db.exec('reset role');
+ const fake=(await db.query("insert into club_private.leaves(session_id,student_id,kind,reason,status,created_by) values($1,$2,'事假','測試','pending',$3) returning id",[seid,sid2,ids.other])).rows[0].id;
+ await as('hrtr');await assert.rejects(()=>act('review_leave',{id:fake,status:'approved'}));
+});
 await check('沒有完整上課紀錄不可核銷',async()=>{await as('admin');await assert.rejects(()=>act('settle',{club_id:cid,start_date:'2026-11-16',end_date:'2026-11-16'}));});
 await db.exec('reset role');await db.query("update club_private.sessions set signed_at=starts_at,attendance_confirmed_at=ends_at,status='completed',summary='已完成授課' where id=$1",[seid]);await db.query("insert into club_private.attendance values($1,$2,'leave')",[seid,sid]);
 await check('分期核銷金額、出席人數快照與重複鎖定',async()=>{await as('admin');await act('settle',{club_id:cid,start_date:'2026-11-16',end_date:'2026-11-16'});d=await snapshot();assert.equal(d.settlements[0].snapshot.total,400);assert.equal(d.settlements[0].snapshot.rows[0].attendance_count,0);await assert.rejects(()=>act('settle',{club_id:cid,start_date:'2026-11-15',end_date:'2026-11-17'}));await assert.rejects(()=>act('add_session',{club_id:cid,teacher_id:ids.clubtr,starts_at:'2026-11-16T10:00:00+08:00',ends_at:'2026-11-16T10:40:00+08:00',units:1,rate:400}));});
