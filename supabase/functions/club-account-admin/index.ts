@@ -24,7 +24,7 @@ Deno.serve(async (request) => {
 
   try {
     const body = await request.json();
-    if (!["invite", "email", "password"].includes(body.action) ||
+    if (!body || !["invite", "email", "password"].includes(body.action) ||
         (body.action !== "invite" && !body.id)) return reply({ error: "請確認帳號操作" }, 400);
     const { error: permissionError } = await user.rpc("club_followup", {
       action: "auth_account", payload: { id: body.id || null },
@@ -39,13 +39,14 @@ Deno.serve(async (request) => {
       return reply({ error: "請輸入有效電子郵件" }, 400);
     }
     if (body.action === "invite") {
-      const { error } = await user.rpc("club_import_accounts", {
+      const { data: result, error } = await user.rpc("club_import_accounts", {
         payload: { term_id: body.term_id || null, rows: [{ email, name: body.name, role: body.role, class_name: body.class_name, number: body.number }] },
       });
       if (error) return reply({ error: error.message }, 400);
+      if (result?.bound === 1) return reply({ message: "既有登入帳號已綁定，可用原本的電子郵件與密碼登入。" });
       const { error: inviteError } = await auth.inviteUserByEmail(email, { redirectTo });
       if (inviteError) {
-        return reply({ message: "帳號設定已儲存；未寄出邀請。既有帳號可直接登入，新帳號請確認 Supabase 郵件設定後重送。" });
+        return reply({ message: "帳號已列為待啟用，但邀請未寄出。請確認登入服務的郵件設定後重試。" });
       }
       return reply({ message: "帳號設定已儲存，已寄出登入邀請。" });
     }

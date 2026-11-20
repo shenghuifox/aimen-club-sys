@@ -201,6 +201,7 @@ begin
    if date_trunc('week',lesson.starts_at at time zone 'Asia/Taipei')<>date_trunc('week',now() at time zone 'Asia/Taipei') then
     raise exception '此假單已帶入往週點名，請由學校處理更正';
    end if;
+   delete from club_private.attendance where session_id=lesson.id and student_id=student.id and status='leave';
    update club_private.sessions set status='scheduled',attendance_confirmed_at=null where id=lesson.id and status='completed';
   end if;
   update club_private.leaves set status='withdrawn' where id=request_id;

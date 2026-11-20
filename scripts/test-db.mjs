@@ -301,6 +301,16 @@ await check('本週可補登、完成點名，往週及非任課者被拒絕',as
  await act('sign_in',{session_id:lesson});
  await act('attendance',{session_id:lesson,summary:'完成課程',marks:{[sid]:'present'}});
  assert.equal((await snapshot()).sessions.find(s=>s.id===lesson).status,'completed');
+ await db.exec('reset role');
+ const {id: leave}= (await db.query(`insert into club_private.leaves(session_id,student_id,kind,reason,status,created_by) values($1,$2,'事假','測試','approved',$3) returning id`,[lesson,sid,ids.stu])).rows[0];
+ await db.query(`update club_private.attendance set status='leave' where session_id=$1 and student_id=$2`,[lesson,sid]);
+ await as('stu');
+ await follow('withdraw_leave',{id:leave});
+ await as('clubtr');
+ const refreshed=await snapshot();
+ assert.equal(refreshed.sessions.find(s=>s.id===lesson).attendance_confirmed_at,null);
+ assert.ok(!refreshed.attendance.some(a=>a.session_id===lesson&&a.student_id===sid));
+ await act('attendance',{session_id:lesson,summary:'確認撤回後重新點名',marks:{[sid]:'present'}});
 });
 await check('帳號編修及登入憑證管理限行政，私密欄位不外露',async()=>{
  await as('stu');
