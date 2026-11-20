@@ -21,6 +21,7 @@ const OPERATIONS=new Set(['cancel','makeup','swap','fee_status','void_settlement
 export async function runAction(mode,data,user,action,payload) {
  if (mode==='demo') {
   const snapshot=demoAction(data,user,action,payload);
+  if (action==='batch_roster'&&payload.preview) return {snapshot:data};
   localStorage.setItem(key,JSON.stringify(snapshot));
   return {snapshot};
  }

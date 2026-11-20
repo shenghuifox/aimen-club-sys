@@ -39,7 +39,7 @@ function App(){
     const pending=result?.pending??p.rows.filter(row=>snapshot.pending_accounts?.some(entry=>entry.email===row.email)).length;
     message='已綁定 '+(p.rows.length-pending)+' 筆，待啟用 '+pending+' 筆';
    }
-   if(a==='batch_roster') message='已處理 '+p.ids.length+' 筆名冊';
+   if(a==='batch_roster') message=p.preview?'預檢通過，可確認送出':'已處理 '+p.ids.length+' 筆名冊';
    notice(message+(mode==='demo'?'（僅此瀏覽器試用資料）':''));
    return snapshot;
   } catch(e) { notice(e.message,true);return null; }
@@ -57,7 +57,7 @@ function App(){
  const canView=id=>!(['billing','permissions','settings'].includes(id)&&!admin)&&!(id==='attendance'&&!admin&&!teacher)&&!(id==='changes'&&!admin&&!has(user,'clubtr'));
  const activeTerm=data.terms.find(t=>t.id===term);
  const clubs=data.clubs.filter(c=>c.term_id===term),sessions=data.sessions.filter(s=>clubs.some(c=>c.id===s.club_id)),students=data.students.filter(s=>s.term_id===term);
- const visibleStudents=students.filter(s=>admin||s.user_id===user.id||s.homeroom_id===user.id||data.enrollments.some(e=>e.student_id===s.id&&clubs.some(c=>c.id===e.club_id&&c.teacher_id===user.id)));
+ const visibleStudents=students.filter(s=>admin||s.user_id===user.id||s.homeroom_id===user.id||data.enrollments.some(e=>e.student_id===s.id&&clubs.some(c=>c.id===e.club_id&&(c.teacher_id===user.id||sessions.some(se=>se.club_id===c.id&&se.teacher_id===user.id)))));
  const title=NAV.find(n=>n[0]===page)?.[1]||'入口首頁', clubName=id=>data.clubs.find(c=>c.id===id)?.name||'社團', userName=id=>data.users.find(u=>u.id===id)?.name||'未指派',studentName=id=>data.students.find(s=>s.id===id)?.name||'學生';
  const mySessions=sessions.filter(s=>admin||s.teacher_id===user.id),days=weekDays(week),weekSessions=sessions.filter(s=>days.includes(dateKey(new Date(s.starts_at)))&&s.status!=='cancelled');
  const leaves=data.leaves.filter(l=>visibleStudents.some(s=>s.id===l.student_id)&&sessions.some(s=>s.id===l.session_id));

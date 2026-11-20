@@ -178,7 +178,10 @@ await check('候補與繳費狀態，學生僅見自己的結果',async()=>{
  await as('admin');
  const entries=(await snapshot()).enrollments.filter(e=>e.club_id===cid);
  const waiting=entries.find(e=>e.student_id===sid2);
- await db.query('select public.club_batch_roster($1)',[{club_id:cid,operation:'waitlisted',ids:[waiting.id]}]);
+ const waitlist={club_id:cid,operation:'waitlisted',ids:[waiting.id]};
+ await db.query('select public.club_batch_roster($1)',[{...waitlist,preview:true}]);
+ assert.equal((await snapshot()).enrollments.find(e=>e.id===waiting.id).status,'pending');
+ await db.query('select public.club_batch_roster($1)',[waitlist]);
  const accepted=entries.find(e=>e.student_id===sid);
  await operation('fee_status',{id:accepted.id,status:'paid'});
  await as('stu');

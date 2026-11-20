@@ -71,7 +71,7 @@ begin
      'club_id',cid,'student_id',target,'kind',operation,'effective_date',effective,'reason',reason));
    end if;
    row_count := row_count+1;
-  exception when raise_exception then
+  exception when raise_exception or unique_violation then
    raise exception '第 % 筆%：%',row_count+1,coalesce('（'||label||'）',''),sqlerrm;
   end;
  end loop;
@@ -144,7 +144,7 @@ begin
   elsif action in ('cancel','makeup','swap') then
    select * into source from club_private.sessions where id=(payload->>'session_id')::uuid;
    if not found or source.signed_at is not null
-      or source.status<>case when action='makeup' then 'cancelled' else 'scheduled' end then
+      or source.status<>(case when action='makeup' then 'cancelled' else 'scheduled' end) then
     raise exception '請選擇未簽到且符合異動條件的節次';
    end if;
    perform club_private.assert_open(source.club_id,(source.starts_at at time zone 'Asia/Taipei')::date);
@@ -198,3 +198,18 @@ create function public.club_operations(action text,payload jsonb) returns void
 language sql security invoker set search_path='' as $$ select club_private.operations(action,payload) $$;
 revoke all on function club_private.operations(text,jsonb),public.club_operations(text,jsonb) from public,anon,authenticated;
 grant execute on function club_private.operations(text,jsonb),public.club_operations(text,jsonb) to authenticated;
+
+create or replace function public.club_batch_roster(payload jsonb) returns jsonb
+language plpgsql security invoker set search_path='' as $$
+declare result jsonb;
+begin
+ if payload->'preview' is distinct from 'true'::jsonb then
+  return club_private.batch_roster(payload);
+ end if;
+ begin
+  result:=club_private.batch_roster(payload);
+  raise sqlstate 'CL005';
+ exception when sqlstate 'CL005' then
+  return result;
+ end;
+end $$;

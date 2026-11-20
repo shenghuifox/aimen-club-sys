@@ -64,10 +64,12 @@ export default function EnrollmentManagement({term,clubs,students,enrollments,bu
   <div className="form-actions">
    {confirming&&<span role="status">將{OPERATIONS[operation]} {count} 人{needsDate?'，生效日 '+effective:''}。</span>}
    <button className="btn primary" disabled={busy||!canSubmit} onClick={async()=>{
-    if (!confirming) { setConfirming(true); return; }
-    const result=await action('batch_roster',{club_id:clubId,operation,effective_date:needsDate?effective:null,ids:selected,reason});
-    if (result) clearSelection();
-   }}>{confirming?'確認送出':OPERATIONS[operation]+'（'+count+' 人）'}</button>
+    const result=await action('batch_roster',{club_id:clubId,operation,effective_date:needsDate?effective:null,ids:selected,reason,preview:!confirming});
+    if (result) {
+     if (confirming) clearSelection();
+     else setConfirming(true);
+    }
+   }}>{confirming?'確認送出':'預檢'+OPERATIONS[operation]+'（'+count+' 人）'}</button>
   </div>
   {clubEnrollments.length>0&&<details>
    <summary>查看目前報名與錄取紀錄</summary>
