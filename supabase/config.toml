@@ -1,3 +1,6 @@
 project_id = "aimen-club-sys"
 [db.migrations]
 schema_paths = ["./schemas/*.sql"]
+
+[functions.club-account-admin]
+verify_jwt = true

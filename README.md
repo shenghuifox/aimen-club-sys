@@ -24,9 +24,17 @@
 
 ## 開發與部署
 
-Node 22 以上，pnpm 11.25.0。`pnpm install`、`pnpm test`、`pnpm test:db`、`pnpm build`。本機複製 `.env.example` 至 `.env.local`，填入可公開的 Publishable key。禁止把 secret key 放在前台。
+Node 24，pnpm 11.25.0。`pnpm install`、`pnpm test`、`pnpm test:db`、`pnpm build`。本機複製 `.env.example` 至 `.env.local`，填入可公開的 Publishable key。禁止把 secret key 放在前台。
 
 main 推送後，`.github/workflows/pages.yml` 執行單元與資料庫測試，再建置部署。GitHub Settings → Pages → Source 須選 GitHub Actions。
+
+## 0.7.0 操作更新
+
+- 假單可由行政、送單人、綁定家長／學生、班級導師及該節社團老師依權限撤回。已帶入本週點名的假單撤回後，須重做該節點名確認。
+- 社團老師可撤回本人提出的待確認異動。行政可撤回待確認異動；已生效異動走更正。
+- 授課老師與行政可補簽到及補點本週課程。使用臺灣時間、週一至週日，核銷鎖仍適用。
+- 帳號管理可單筆邀請與編修帳號，登入電子郵件和密碼由 `club-account-admin` Edge Function 更新。密碼欄只接受新密碼。其他管理者的登入憑證須由本人管理。
+- 從 0.6.0 升級時先套用 `007_requests_and_accounts.sql`，接著發布 `club-account-admin`（JWT 驗證開啟）、於 Supabase Auth 允許正式 Pages 站的回呼網址並確認寄信設定，再部署前端。
 
 ## 0.6.0 接手操作
 
