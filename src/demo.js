@@ -2,14 +2,14 @@ import {addDays,dateKey,weekDays,settlementPreview,has,enrolledOn,intersects} fr
 import {recurringPreview} from './recurrence.js';
 export function seed(){
  const monday=weekDays(dateKey())[0], term='term-115-1';
- const users=[{id:'admin',username:'admin',name:'行政測試',roles:['admin']},{id:'stu',username:'stu',name:'學生測試',roles:['stu']},{id:'clubtr',username:'clubtr',name:'社團老師測試',roles:['clubtr']},{id:'hrtr',username:'hrtr',name:'班級導師測試',roles:['hrtr']}];
+ const users=[{id:'admin',username:'admin',name:'行政測試',roles:['admin']},{id:'stu',username:'stu',name:'學生測試',roles:['stu']},{id:'clubtr',username:'clubtr',name:'社團老師測試',roles:['clubtr']},{id:'hrtr',username:'hrtr',name:'班級導師測試',roles:['hrtr']},{id:'guardian',username:'guardian',name:'家長測試',roles:['guardian']}];
  const clubs=[{id:'football',term_id:term,name:'足球小將',description:'從傳接球到團隊合作，在球場上找到自己的節奏。',plan_name:'課後多元學習計畫',teacher_id:'clubtr',location:'學校操場',capacity:20,rate:400,kind:'社團',status:'published',color:'#e7a968',registration_start:addDays(monday,-30),registration_end:addDays(monday,30)},
  {id:'art',term_id:term,name:'玩色美術',description:'觀察生活、自由創作，用色彩記錄島嶼日常。',plan_name:'課後多元學習計畫',teacher_id:'clubtr',location:'美術教室',capacity:16,rate:400,kind:'社團',status:'published',color:'#a6a0cf',registration_start:addDays(monday,-30),registration_end:addDays(monday,30)},
  {id:'study',term_id:term,name:'課後作業指導',description:'陪伴完成作業，建立自主學習與閱讀習慣。',plan_name:'課後照顧計畫',teacher_id:'hrtr',location:'三年甲班',capacity:25,rate:350,kind:'課後班',status:'published',color:'#7bb8ac',registration_start:addDays(monday,-30),registration_end:addDays(monday,30)}];
  const students=[{id:'s1',user_id:'stu',term_id:term,name:'測試學生一',class_name:'三年甲班',homeroom_id:'hrtr',number:'01'},{id:'s2',user_id:null,term_id:term,name:'測試學生二',class_name:'三年甲班',homeroom_id:'hrtr',number:'02'},{id:'s3',user_id:null,term_id:term,name:'測試學生三',class_name:'四年甲班',homeroom_id:null,number:'01'}];
  const specs=[['football',0,'15:30','16:50',2],['art',1,'15:30','16:50',2],['study',0,'13:30','15:00',2],['study',2,'13:30','15:00',2],['football',3,'15:30','16:50',2],['art',4,'13:30','14:50',2],['football',-7,'15:30','16:50',2]];
  const sessions=specs.map(([cid,day,start,end,units],i)=>({id:'session-'+i,club_id:cid,teacher_id:clubs.find(c=>c.id===cid).teacher_id,starts_at:`${addDays(monday,day)}T${start}:00+08:00`,ends_at:`${addDays(monday,day)}T${end}:00+08:00`,units,rate:clubs.find(c=>c.id===cid).rate,summary:day<0?'傳接球練習與小組合作':'',status:day<0?'completed':'scheduled',signed_at:day<0?`${addDays(monday,day)}T15:28:00+08:00`:null,attendance_confirmed_at:day<0?`${addDays(monday,day)}T16:50:00+08:00`:null}));
- return {users,terms:[{id:term,name:'115-1',status:'active',start_date:'2026-08-01',end_date:'2027-01-31'}],clubs,students,sessions,enrollments:[{id:'e1',club_id:'football',student_id:'s1',status:'enrolled',start_date:addDays(monday,-30),end_date:null},{id:'e2',club_id:'football',student_id:'s2',status:'enrolled',start_date:addDays(monday,-30),end_date:null},{id:'e3',club_id:'study',student_id:'s1',status:'enrolled',start_date:addDays(monday,-30),end_date:null}],attendance:[{session_id:'session-6',student_id:'s1',status:'present'},{session_id:'session-6',student_id:'s2',status:'present'}],leaves:[],changes:[],settlements:[],audit:[]};
+ return {users,guardian_links:[{guardian_id:'guardian',student_id:'s1'}],terms:[{id:term,name:'115-1',status:'active',start_date:'2026-08-01',end_date:'2027-01-31'}],clubs,students,sessions,enrollments:[{id:'e1',club_id:'football',student_id:'s1',status:'enrolled',start_date:addDays(monday,-30),end_date:null},{id:'e2',club_id:'football',student_id:'s2',status:'enrolled',start_date:addDays(monday,-30),end_date:null},{id:'e3',club_id:'study',student_id:'s1',status:'enrolled',start_date:addDays(monday,-30),end_date:null}],attendance:[{session_id:'session-6',student_id:'s1',status:'present'},{session_id:'session-6',student_id:'s2',status:'present'}],leaves:[],changes:[],settlements:[],audit:[]};
 }
 export function demoAction(data,user,action,p){
  const d=structuredClone(data), id=()=>crypto.randomUUID(), now=new Date().toISOString(), isAdmin=has(user,'admin');
@@ -18,7 +18,52 @@ export function demoAction(data,user,action,p){
  const manageStudent=s=>s&&(isAdmin||s.homeroom_id===user.id||s.user_id===user.id||d.enrollments.some(e=>e.student_id===s.id&&d.clubs.find(c=>c.id===e.club_id)?.teacher_id===user.id));
  const unlocked=(cid,date)=>{if(d.settlements.some(b=>b.club_id===cid&&date>=b.start_date&&date<=b.end_date))fail('該期間已鎖定，請走核銷更正流程。');};
  const termOpen=cid=>{if(d.terms.find(t=>t.id===d.clubs.find(c=>c.id===cid)?.term_id)?.status!=='active')fail('學期已封存。');};
- if(action==='import_accounts'){
+ if(action==='account_status'){
+  requireAdmin();
+  const target=d.users.find(u=>u.id===p.id);
+  if(!target||target.id===user.id||!p.reason?.trim())fail('請選其他帳號並填寫原因。');
+  if(!p.active&&has(target,'admin')&&d.users.filter(u=>u.active!==false&&has(u,'admin')).length<=2)fail('請保留至少兩位有效管理者。');
+  target.active=p.active;
+ }else if(action==='copy_term'){
+  requireAdmin();
+  const source=d.terms.find(t=>t.id===p.id),name=p.name?.trim();
+  if(!source||!name||p.start_date>p.end_date||d.terms.some(t=>t.name===name))fail('請確認學期名稱及日期，名稱不可重複。');
+  const newTerm=id(),offset=Math.round((new Date(p.start_date)-new Date(source.start_date))/86400000);
+  d.terms.push({id:newTerm,name,start_date:p.start_date,end_date:p.end_date,status:'active'});
+  const names=new Map();
+  for(const s of d.students.filter(s=>s.term_id===source.id)){
+   const next=id();
+   names.set(s.id,next);
+   d.students.push({...s,id:next,term_id:newTerm});
+  }
+  d.guardian_links.push(...d.guardian_links.filter(g=>names.has(g.student_id)).map(g=>({...g,student_id:names.get(g.student_id)})));
+  const shift=date=>[addDays(date,offset),p.end_date].sort()[0];
+  d.clubs.push(...d.clubs.filter(c=>c.term_id===source.id).map(c=>({...c,id:id(),term_id:newTerm,status:'draft',activity_ref:'',registration_start:shift(c.registration_start),registration_end:shift(c.registration_end)})));
+ }else if(action==='link_guardian'||action==='unlink_guardian'){
+  requireAdmin();
+  if(!student||(!p.email&&action==='link_guardian'))fail('請核對學生及家長帳號。');
+  if(action==='unlink_guardian')d.guardian_links=d.guardian_links.filter(g=>g.guardian_id!==p.id||g.student_id!==student.id);
+  else {
+   const email=p.email.trim().toLowerCase();
+   let account=d.users.find(u=>u.username===email);
+   if(account&&(!has(account,'guardian')||account.active===false))fail('該帳號已停權或使用其他身分。');
+   if(!account){account={id:id(),username:email,name:p.name,roles:['guardian']};d.users.push(account);}
+   if(!d.guardian_links.some(g=>g.guardian_id===account.id&&g.student_id===student.id))d.guardian_links.push({guardian_id:account.id,student_id:student.id});
+  }
+ }else if(action==='guardian_leave'){
+  if(!has(user,'guardian')||!session||session.status!=='scheduled'||!student||!p.reason?.trim()||
+    !d.guardian_links.some(g=>g.guardian_id===user.id&&g.student_id===student.id)||
+    !d.enrollments.some(e=>e.student_id===student.id&&e.club_id===session.club_id&&enrolledOn(e,dateKey(new Date(session.starts_at)))))fail('請核對孩子、課程及請假原因。');
+  termOpen(session.club_id);unlocked(session.club_id,dateKey(new Date(session.starts_at)));
+  if(d.leaves.some(l=>l.session_id===session.id&&l.student_id===student.id&&l.status!=='rejected'))fail('此節已有假單。');
+  d.leaves.push({id:id(),student_id:student.id,session_id:session.id,kind:p.kind,reason:p.reason,status:'pending',created_by:user.id,created_at:now});
+ }else if(action==='edit_club'){
+  requireAdmin();
+  const target=d.clubs.find(c=>c.id===p.id);
+  if(!target)fail('找不到社團。');
+  termOpen(target.id);
+  Object.assign(target,p);
+ }else if(action==='import_accounts'){
   requireAdmin();
   d.pending_accounts??=[];
   for (const row of p.rows) {
@@ -106,7 +151,7 @@ export function demoAction(data,user,action,p){
   if(roster.some(e=>!['present','absent','late','leave'].includes(p.marks?.[e.student_id])))fail('請完成每位學生的點名。');
   d.attendance=d.attendance.filter(a=>a.session_id!==session.id);roster.forEach(e=>d.attendance.push({session_id:session.id,student_id:e.student_id,status:d.leaves.some(l=>l.session_id===session.id&&l.student_id===e.student_id&&l.status==='approved')?'leave':p.marks[e.student_id]}));
   session.summary=p.summary;session.attendance_confirmed_at=now;session.status='completed';
- }else if(action==='save_club'){
+ }else if(action==='save_club'||action==='create_club'){
   requireAdmin();if(!p.name?.trim()||Number(p.capacity)<1||Number(p.rate)<0)fail('請檢查名稱、名額與費率。');d.clubs.push({...p,id:id(),status:'draft',color:'#7bb8ac'});
  }else if(action==='publish_club'){
   requireAdmin();if(!club)fail('找不到社團。');termOpen(club.id);club.status=club.status==='published'?'draft':'published';

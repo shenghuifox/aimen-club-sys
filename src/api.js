@@ -4,7 +4,7 @@ const env=import.meta.env;
 export const configured=Boolean(env.VITE_SUPABASE_URL&&env.VITE_SUPABASE_PUBLISHABLE_KEY);
 export const googleEnabled=env.VITE_GOOGLE_AUTH_ENABLED==='true';
 export const supabase=configured?createClient(env.VITE_SUPABASE_URL,env.VITE_SUPABASE_PUBLISHABLE_KEY):null;
-const key='aimen-demo-v1';
+const key='aimen-demo-v2';
 export function loadDemo(){try{const saved=JSON.parse(localStorage.getItem(key));return saved?.users&&saved?.terms?saved:seed();}catch{return seed();}}
 export function resetDemo(){localStorage.removeItem(key);return seed();}
 export async function getSnapshot(){const {data,error}=await supabase.rpc('club_snapshot');if(error)throw error;return data;}
@@ -18,15 +18,18 @@ export async function getLoginSnapshot() {
 
 const OPERATIONS=new Set(['cancel','makeup','swap','fee_status','void_settlement']);
 
+const MANAGEMENT=new Set(['account_status','copy_term','link_guardian','unlink_guardian','guardian_leave','edit_club','create_club']);
+
 export async function runAction(mode,data,user,action,payload) {
  if (mode==='demo') {
+  if(user.active===false) throw Error('帳號已停權');
   const snapshot=demoAction(data,user,action,payload);
   if (action==='batch_roster'&&payload.preview) return {snapshot:data};
   localStorage.setItem(key,JSON.stringify(snapshot));
   return {snapshot};
  }
  const dedicated=RPC_ACTIONS.has(action);
- const {data:result,error}=await supabase.rpc(dedicated?'club_'+action:OPERATIONS.has(action)?'club_operations':'club_action',dedicated?{payload}:{action,payload});
+ const {data:result,error}=await supabase.rpc(dedicated?'club_'+action:MANAGEMENT.has(action)?'club_manage':OPERATIONS.has(action)?'club_operations':'club_action',dedicated?{payload}:{action,payload});
  if (error?.code==='PGRST202') throw Error('資料庫尚未更新到目前版本，請聯絡管理者。');
  if (error) throw error;
  return {snapshot:await getSnapshot(),result};
