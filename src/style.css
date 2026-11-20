@@ -23,3 +23,12 @@
  .topbar-right select{max-width:130px}
  .setting-row{flex-wrap:wrap}.app-footer span{display:none}
 }
+
+.weekly-courses{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:12px}
+.weekly-day{min-width:0}
+.weekly-day h3{margin:0 0 8px}
+.weekly-course{display:grid;gap:4px;overflow-wrap:anywhere;border:1px solid var(--border);border-inline-start:5px solid var(--green);border-radius:8px;padding:10px;margin-bottom:8px;line-height:1.5}
+.weekly-course span{font-size:.9rem}
+.role-checks label{display:flex;flex-direction:row;align-items:center;gap:8px;margin-bottom:8px}
+.role-checks input{width:auto}
+@media(max-width:680px){.weekly-courses{grid-template-columns:1fr;padding:0 16px}}

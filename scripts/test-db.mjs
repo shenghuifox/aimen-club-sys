@@ -14,6 +14,7 @@ await db.exec(await fs.readFile(new URL('../supabase/schemas/003_edit_changes.sq
 await db.exec(await fs.readFile(new URL('../supabase/schemas/004_bulk_administration.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../supabase/schemas/005_club_operations.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../supabase/schemas/006_operations_handover.sql',import.meta.url),'utf8'));
+await db.exec(await fs.readFile(new URL('../supabase/schemas/007_requests_and_accounts.sql',import.meta.url),'utf8'));
 const ids={admin:'00000000-0000-0000-0000-000000000001',stu:'00000000-0000-0000-0000-000000000002',clubtr:'00000000-0000-0000-0000-000000000003',hrtr:'00000000-0000-0000-0000-000000000004',other:'00000000-0000-0000-0000-000000000005'};
 for(const [role,id] of Object.entries(ids)){await db.query('insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())',[id,role+'@test.aimen.invalid']);await db.query('insert into club_private.users(id,username,name,roles) values($1,$2,$2,$3)',[id,role,[role==='other'?'stu':role]]);}
 const as=async(role)=>{await db.exec('reset role');await db.query("select set_config('request.jwt.claim.sub',$1,false)",[ids[role]||'']);await db.exec('set role '+(role==='anon'?'anon':'authenticated'));};
@@ -261,5 +262,57 @@ await check('複製名冊、社團與帳號關係，避開舊節次與核銷',as
  await manage('unlink_guardian',{id:ids.guardian,student_id:sid});
  await as('guardian');
  assert.deepEqual((await snapshot()).students.map(s=>s.id),[child.id]);
+});
+const follow=async(action,payload)=>(await db.query('select public.club_followup($1,$2) result',[action,JSON.stringify(payload)])).rows[0].result;
+await check('假單撤回有身分限制，撤回後可以重送',async()=>{
+ await as('admin');
+ const item=(await snapshot()).leaves.find(l=>l.student_id===sid&&l.status==='approved'&&l.session_id!==seid);
+ await as('other');
+ await assert.rejects(()=>follow('withdraw_leave',{id:item.id}));
+ await as('stu');
+ await follow('withdraw_leave',{id:item.id});
+ assert.equal((await snapshot()).leaves.find(l=>l.id===item.id).status,'withdrawn');
+ await act('leave',{session_id:item.session_id,student_id:sid,kind:'事假',reason:'重新送出'});
+});
+await check('社團老師可撤回自己尚未確認的異動，行政保留異動歷史',async()=>{
+ await as('clubtr');
+ const {id}=await act('change',{club_id:cid,kind:'add_student',student_id:sid,effective_date:'2027-01-15',reason:'撤回測試'});
+ await as('stu');
+ await assert.rejects(()=>follow('withdraw_change',{id}));
+ await as('clubtr');
+ await follow('withdraw_change',{id});
+ assert.equal((await snapshot()).changes.find(c=>c.id===id).status,'withdrawn');
+ await as('admin');
+ await assert.rejects(()=>act('review_change',{id,status:'approved'}));
+});
+await check('本週可補登、完成點名，往週及非任課者被拒絕',async()=>{
+ await db.exec('reset role');
+ const dates=(await db.query(`select (now() at time zone 'Asia/Taipei')::date today,
+  date_trunc('week',now() at time zone 'Asia/Taipei')::date-1 previous`)).rows[0];
+ const add=async date=>(await db.query(`insert into club_private.sessions(club_id,teacher_id,starts_at,ends_at,units,rate)
+ values($1,$2,$3::date::timestamp at time zone 'Asia/Taipei',($3::date::timestamp + interval '1 hour') at time zone 'Asia/Taipei',1,400) returning id`,
+ [cid,ids.clubtr,date])).rows[0].id;
+ const lesson=await add(dates.today),old=await add(dates.previous);
+ await as('stu');
+ await assert.rejects(()=>act('sign_in',{session_id:lesson}));
+ await as('clubtr');
+ await assert.rejects(()=>act('sign_in',{session_id:old}));
+ await act('sign_in',{session_id:lesson});
+ await act('attendance',{session_id:lesson,summary:'完成課程',marks:{[sid]:'present'}});
+ assert.equal((await snapshot()).sessions.find(s=>s.id===lesson).status,'completed');
+});
+await check('帳號編修及登入憑證管理限行政，私密欄位不外露',async()=>{
+ await as('stu');
+ await assert.rejects(()=>follow('auth_account',{id:ids.other}));
+ await as('admin');
+ await assert.rejects(()=>follow('auth_account',{id:ids.hrtr}));
+ await follow('edit_account',{id:ids.other,username:'new-student',name:'新版學生',roles:['stu'],notes:'校內備註',student_number:'007',term_id:term});
+ let data=await snapshot();
+ assert.equal(data.users.find(u=>u.id===ids.other).notes,'校內備註');
+ assert.equal(data.students.find(s=>s.id===sid2).student_number,'007');
+ await as('other');
+ data=await snapshot();
+ assert.ok(data.users.every(u=>!('notes' in u)&&!('email' in u)));
+ assert.ok(data.students.every(s=>!('student_number' in s)));
 });
 await db.close();console.log(`${count} database security scenarios passed`);
