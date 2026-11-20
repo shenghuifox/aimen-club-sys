@@ -6,13 +6,13 @@
 
 部署網址：https://shenghuifox.github.io/aimen-club-sys/
 
-登入頁提供四種**假資料角色體驗**：admin、stu、clubtr、hrtr。這些體驗按鈕不是 Auth 帳號；僅修改目前瀏覽器中的假資料，請勿輸入真實個資。
+登入頁提供五種**假資料角色體驗**：行政、學生、社團老師、班級導師、家長。這些體驗按鈕不是 Auth 帳號；僅修改目前瀏覽器中的假資料，請勿輸入真實個資。
 
 正式測試帳號需先完成下方資料庫安裝與 Auth 建立，再使用帳號密碼登入。
 
 ## 第一次安裝 Supabase
 
-1. 在專案 eddaalutgxmanorbfrbm 的 SQL Editor，以管理者依序執行 `supabase/schemas/001_club.sql` **一次**、`002_recurring_and_student_binding.sql`、`003_edit_changes.sql`、`004_bulk_administration.sql`、`005_club_operations.sql`。由 0.3.0 依序套用 004、005，先更新資料庫再部署前端。已透過 Supabase 遷移套用者不需重複執行。
+1. 在專案 eddaalutgxmanorbfrbm 的 SQL Editor，以管理者依序執行 `supabase/schemas/001_club.sql` **一次**、`002_recurring_and_student_binding.sql`、`003_edit_changes.sql`、`004_bulk_administration.sql`、`005_club_operations.sql`、`006_operations_handover.sql`。由 0.5.0 升至 0.6.0 只需套用 006，先更新資料庫再部署前端。已透過 Supabase 遷移套用者不需重複執行。
 2. 在可信任的本機環境設定 `SUPABASE_SECRET_KEY`（伺服器 secret / legacy service_role key），執行 `node scripts/bootstrap.mjs`。金鑰不應貼在聊天、放入 VITE_ 變數或提交 GitHub。
 3. 建立後，四個帳號的隨機密碼會保存到本機 `credentials-test-accounts.json`（已加入 gitignore）。帳號會映射成 `帳號@test.aimen.invalid`。此網域僅用於獨立測試，不支援收信或自助重設。
 4. admin 登入後建立社團、上課節次、學生名冊，將 stu 綁定學生、hrtr 指定為導師。核對課程與權限後進行試辦。
@@ -27,6 +27,14 @@
 Node 22 以上，pnpm 11.25.0。`pnpm install`、`pnpm test`、`pnpm test:db`、`pnpm build`。本機複製 `.env.example` 至 `.env.local`，填入可公開的 Publishable key。禁止把 secret key 放在前台。
 
 main 推送後，`.github/workflows/pages.yml` 執行單元與資料庫測試，再建置部署。GitHub Settings → Pages → Source 須選 GitHub Actions。
+
+## 0.6.0 接手操作
+
+- 學期管理可複製前一期學生、社團、導師及既有帳號綁定。社團複製成草稿；不要沿用舊節次、報名、點名及核銷。核對升班、師資與報名日期後再發布。
+- 權限管理可對其他帳號停權、復權並填原因。學校先建立並驗證 Supabase Auth 帳號，承辦再從前台完成身分對應；家長從學生名冊綁定。
+- 家長可查已綁定孩子的本週課表、報名結果、異動、繳費並送出請假。導師或行政在既有假單畫面覆核。
+- 社團可維護計畫與案號。行政核銷可匯出按社團彙整的活動與核銷總表，原憑證清冊仍使用核銷快照。
+- 登入頁的「加到手機主畫面」提供 Safari 和 Chrome 的操作方式。行動裝置可建立線上捷徑。
 
 ## 0.5.0 試辦操作
 
