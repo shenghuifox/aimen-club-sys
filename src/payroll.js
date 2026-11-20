@@ -7,7 +7,7 @@ const OFFICE_RELS='http://schemas.openxmlformats.org/officeDocument/2006/relatio
 const MIME='application/vnd.openxmlformats-officedocument.spreadsheetml.';
 const XML='<?xml version="1.0" encoding="UTF-8"?>';
 const COLUMNS='ABCDEFG';
-const STYLE={plain:0,title:1,heading:2,label:3,center:4,money:5,box:6,divider:7};
+const STYLE={plain:0,title:1,label:2,center:3,money:4,box:5};
 
 const rocDate=date=>{
  const [year,month,day]=date.split('-').map(Number);
@@ -32,7 +32,7 @@ export function payrollDetails(snapshot) {
    return month+'/'+day+'('+units/100+')';
   }).join('、')};
  });
- return {title:label+' 鐘點費印領清冊',purpose:'支 '+label+' '+snapshot.club.name+' 授課鐘點費',teachers};
+ return {title:label+' 鐘點費印領清冊',teachers};
 }
 
 function cell(ref,value,style) {
@@ -47,10 +47,10 @@ function cell(ref,value,style) {
 }
 
 function worksheet(snapshot,demo,last) {
- const {title,purpose,teachers}=payrollDetails(snapshot);
+ const {title,teachers}=payrollDetails(snapshot);
  const rows=[];
  const merges=[];
- const {plain,heading,label,center,money,box,divider}=STYLE;
+ const {plain,label,center,money,box}=STYLE;
  const row=(height,layout=[])=>{
   const number=rows.length+1;
   const cells=new Map();
@@ -67,40 +67,25 @@ function worksheet(snapshot,demo,last) {
  };
  const blanks=(number,columns)=>[...columns].map(col=>[col+number,'',box]);
 
- row(17,[['F1:G1','日　期：　　年　　月　　日',plain]]);
- row(23,[['A2:E2',snapshot.school,heading],['F2:G2','簽證號：',plain]]);
- row(30,[['A3:G3',(demo?'試用資料｜':'')+'採購（費用動支）申請單暨黏貼憑證用紙',STYLE.title]]);
- row(24,[['A4','憑證編號',label],['B4:C4','預算科目',label],['D4','金額',label],['E4:G4','用途說明',label]]);
- row(23,[['A5:A7','',box],['B5','業務計畫',box],['C5','',box],['D5:D7',Number(snapshot.total),money],['E5:G7',purpose,box]]);
- row(23,[['B6','工作計畫',box],...blanks(6,'ACDEFG')]);
- row(23,[['B7','用途別',box],['C7','鐘點費',box],...blanks(7,'ADEFG')]);
- row(9);
- row(24,[['A9:B9','經（承）辦單位',label],['C9:D9','保管',label],['E9:F9','主計單位',label],['G9','校長',label]]);
- row(24,[['A10:B10','經（承）辦人',box],['C10:D11','物品登記',box],['E10:F13','會計審核',box],['G10:G13','',box]]);
- row(24,[['A11:B11','人事',box],...blanks(11,'CDEFG')]);
- row(24,[['A12:B12','單位主管',box],['C12:D13','財產登記',box],...blanks(12,'EFG')]);
- row(24,[['A13:B13','總務主任',box],...blanks(13,'CDEFG')]);
- row(14);
- row(25,[['A15:G15','憑　證　黏　貼　線',divider]]);
- row(12);
- row(26,[['A17:G17',title,heading]]);
- row(24,['職別','姓名','授課節數','每節金額','印領金額','簽章','備註'].map((value,i)=>[COLUMNS[i]+'18',value,label]));
- for (let i=0;i<Math.max(7,teachers.length);i++) {
-  const t=teachers[i];
-  const values=t?['教師',t.name,Number(t.units),Number(t.rate),Number(t.amount),'',t.note]:[];
-  const height=Math.min(409,Math.max(36,14*Math.ceil((t?.note.length||0)/35)));
-  row(height,[center,center,center,money,money,box,box].map((style,j)=>[COLUMNS[j]+(19+i),values[j],style]));
- }
+ row(25,[['A1:G1',(demo?'試用資料｜':'')+snapshot.school+'　'+snapshot.club.name,STYLE.title]]);
+ row(24,[['A2:G2',title,STYLE.title]]);
+ row(24,['職別','姓名','授課節數','每節金額','印領金額','簽章','備註'].map((value,i)=>[COLUMNS[i]+'3',value,label]));
+ teachers.forEach((t,i)=>{
+  const values=['教師',t.name,Number(t.units),Number(t.rate),Number(t.amount),'',t.note];
+  const lines=Math.max(Math.ceil(t.note.length/22),Math.ceil(t.name.length/8));
+  row(Math.min(409,Math.max(38,14*lines+8)),[center,center,center,money,money,box,box]
+   .map((style,j)=>[COLUMNS[j]+(4+i),values[j],style]));
+ });
  const total=last-1;
  row(28,[['A'+total+':B'+total,'合計',label],['C'+total,Number(snapshot.units),center],
   ['E'+total,Number(snapshot.total),money],...blanks(total,'DFG')]);
  row(24,[['A'+last+':G'+last,'備註：扣繳憑單由出納確認　　出納：',plain]]);
- const cols=[12,19,12,13,16,14,45].map((width,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+width+'" customWidth="1"/>').join('');
+ const cols=[8,15,10,12,13,14,35].map((width,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+width+'" customWidth="1"/>').join('');
  return '<worksheet xmlns="'+MAIN+'"><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:G'+last+
   '"/><sheetViews><sheetView showGridLines="0" workbookViewId="0"/></sheetViews><cols>'+cols+'</cols><sheetData>'+rows.join('')+
   '</sheetData><mergeCells count="'+merges.length+'">'+merges.map(range=>'<mergeCell ref="'+range+'"/>').join('')+
   '</mergeCells><printOptions horizontalCentered="1"/><pageMargins left="0.28" right="0.28" top="0.34" bottom="0.34" header="0" footer="0"/>'+
-  '<pageSetup paperSize="9" orientation="portrait" fitToWidth="1" fitToHeight="0"/></worksheet>';
+  '<pageSetup paperSize="9" orientation="portrait" fitToWidth="1" fitToHeight="1"/></worksheet>';
 }
 
 function styles() {
@@ -110,20 +95,18 @@ function styles() {
   '" fillId="'+fillId+'" numFmtId="'+numFmtId+'" applyNumberFormat="1" applyAlignment="1"><alignment horizontal="'+horizontal+
   '" vertical="center" wrapText="1"/></xf>';
  return '<styleSheet xmlns="'+MAIN+'"><numFmts count="1"><numFmt numFmtId="164" formatCode="#,##0.##"/></numFmts>'+
-  '<fonts count="3">'+font(10)+font(16,'<b/>')+font(12,'<b/>')+'</fonts>'+
+  '<fonts count="2">'+font(10)+font(13,'<b/>')+'</fonts>'+
   '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'+
   '<fill><patternFill patternType="solid"><fgColor rgb="FFF0F0F0"/><bgColor indexed="64"/></patternFill></fill></fills>'+
-  '<borders count="3"><border><left/><right/><top/><bottom/><diagonal/></border><border>'+sides+
-  '<diagonal/></border><border><left/><right/><top style="dashed"><color rgb="FF555555"/></top><bottom/><diagonal/></border></borders>'+
-  '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="8">'+
-  [xf(0,0,'left'),xf(1,0,'center'),xf(2,0,'center'),xf(0,1,'center',0,2),
-   xf(0,1,'center'),xf(0,1,'right',164),xf(0,1,'left'),xf(0,2,'center')].join('')+
+  '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border>'+sides+'<diagonal/></border></borders>'+
+  '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="6">'+
+  [xf(0,0,'left'),xf(1,0,'center'),xf(0,1,'center',0,2),xf(0,1,'center'),xf(0,1,'right',164),xf(0,1,'left')].join('')+
   '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
 }
 
 export function buildPayrollWorkbook(snapshot,demo=false) {
- const last=27+Math.max(0,snapshot.teachers.length-7);
- const sheetName='憑證及印領清冊';
+ const last=5+snapshot.teachers.length;
+ const sheetName='鐘點費印領清冊';
  const rel=(id,type,target)=>'<Relationship Id="rId'+id+'" Type="'+OFFICE_RELS+'/'+type+'" Target="'+target+'"/>';
  const rels=(...items)=>'<Relationships xmlns="'+PKG_RELS+'">'+items.join('')+'</Relationships>';
  const override=(path,type)=>'<Override PartName="/xl/'+path+'" ContentType="'+MIME+type+'+xml"/>';

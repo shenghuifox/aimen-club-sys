@@ -20,7 +20,7 @@ jobs:
           node-version: '24'
       - run: npm install --global pnpm@11.25.0
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - run: node --test tests/*.test.mjs
+      - run: AIMEN_TEST_CHROME=$(command -v google-chrome) node --test tests/*.test.mjs
       - run: node scripts/test-db.mjs
       - run: node node_modules/vite/bin/vite.js build
         env:

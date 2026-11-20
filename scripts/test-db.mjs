@@ -15,6 +15,7 @@ await db.exec(await fs.readFile(new URL('../supabase/schemas/004_bulk_administra
 await db.exec(await fs.readFile(new URL('../supabase/schemas/005_club_operations.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../supabase/schemas/006_operations_handover.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../supabase/schemas/007_requests_and_accounts.sql',import.meta.url),'utf8'));
+await db.exec(await fs.readFile(new URL('../supabase/schemas/008_single_admin_invites.sql',import.meta.url),'utf8'));
 const ids={admin:'00000000-0000-0000-0000-000000000001',stu:'00000000-0000-0000-0000-000000000002',clubtr:'00000000-0000-0000-0000-000000000003',hrtr:'00000000-0000-0000-0000-000000000004',other:'00000000-0000-0000-0000-000000000005'};
 for(const [role,id] of Object.entries(ids)){await db.query('insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())',[id,role+'@test.aimen.invalid']);await db.query('insert into club_private.users(id,username,name,roles) values($1,$2,$2,$3)',[id,role,[role==='other'?'stu':role]]);}
 const as=async(role)=>{await db.exec('reset role');await db.query("select set_config('request.jwt.claim.sub',$1,false)",[ids[role]||'']);await db.exec('set role '+(role==='anon'?'anon':'authenticated'));};
@@ -333,5 +334,32 @@ await check('帳號編修及登入憑證管理限行政，私密欄位不外露'
  data=await snapshot();
  assert.ok(data.users.every(u=>!('notes' in u)&&!('email' in u)));
  assert.ok(data.students.every(s=>!('student_number' in s)));
+});
+await check('行政可單筆邀請管理員，未驗證及一般帳號不能取得或授予管理權',async()=>{
+ const invite=async email=>(await db.query('select public.club_prepare_admin_account($1) result',[{email,name:'行政測試'}])).rows[0].result;
+ const email='new-admin@example.com';
+ ids.newManager='00000000-0000-0000-0000-000000000012';
+ await as('anon');
+ await assert.rejects(()=>invite(email),/permission denied/);
+ await as('stu');
+ await assert.rejects(()=>invite(email));
+ await as('admin');
+ assert.equal((await invite(email)).pending,1);
+ await assert.rejects(()=>db.query('select public.club_import_accounts($1)',[{rows:[{email:'bulk@example.com',name:'批次行政',role:'admin'}]}]));
+ await db.exec('reset role');
+ await db.query('insert into auth.users(id,email) values($1,$2)',[ids.newManager,email]);
+ await as('newManager');
+ await db.query('select public.club_claim_account()');
+ await assert.rejects(snapshot);
+ await db.exec('reset role');
+ await db.query('update auth.users set email_confirmed_at=now() where id=$1',[ids.newManager]);
+ await as('newManager');
+ await db.query('select public.club_claim_account()');
+ assert.deepEqual((await snapshot()).users.find(u=>u.id===ids.newManager).roles,['admin']);
+ assert.ok(!(await snapshot()).pending_accounts.some(p=>p.email===email));
+ await as('admin');
+ assert.equal((await invite('clubtr@test.aimen.invalid')).bound,1);
+ assert.deepEqual((await snapshot()).users.find(u=>u.id===ids.clubtr).roles,['clubtr','admin']);
+ await assert.rejects(()=>invite('guardian@example.com'));
 });
 await db.close();console.log(`${count} database security scenarios passed`);
