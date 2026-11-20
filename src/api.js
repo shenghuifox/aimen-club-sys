@@ -8,5 +8,28 @@ const key='aimen-demo-v1';
 export function loadDemo(){try{const saved=JSON.parse(localStorage.getItem(key));return saved?.users&&saved?.terms?saved:seed();}catch{return seed();}}
 export function resetDemo(){localStorage.removeItem(key);return seed();}
 export async function getSnapshot(){const {data,error}=await supabase.rpc('club_snapshot');if(error)throw error;return data;}
-export async function runAction(mode,data,user,action,payload){if(mode==='demo'){const next=demoAction(data,user,action,payload);localStorage.setItem(key,JSON.stringify(next));return next;}const rpc={batch_sessions:'club_batch_sessions',update_student:'club_update_student',edit_change:'club_edit_change'}[action];const {error}=await supabase.rpc(rpc||'club_action',rpc?{payload}:{action,payload});if(error){if(error.code==='PGRST202')throw Error('資料庫尚未更新，請由管理者執行 最新升級 SQL（編修異動需 003_edit_changes.sql）後重試。');throw error;}return getSnapshot();}
-export async function login(username,password){const email=username.includes('@')?username:`${username}@test.aimen.invalid`;const {data,error}=await supabase.auth.signInWithPassword({email,password});if(error)throw Error('登入失敗，請確認帳號與密碼；若帳號尚未建立，請聯絡管理者。');return data;}
+const RPC_ACTIONS=new Set(['batch_sessions','update_student','edit_change','import_accounts','cancel_account','batch_roster']);
+
+export async function getLoginSnapshot() {
+ const {error}=await supabase.rpc('club_claim_account');
+ if (error) throw error;
+ return getSnapshot();
+}
+
+const OPERATIONS=new Set(['cancel','makeup','swap','fee_status','void_settlement']);
+
+export async function runAction(mode,data,user,action,payload) {
+ if (mode==='demo') {
+  const snapshot=demoAction(data,user,action,payload);
+  if (action==='batch_roster'&&payload.preview) return {snapshot:data};
+  localStorage.setItem(key,JSON.stringify(snapshot));
+  return {snapshot};
+ }
+ const dedicated=RPC_ACTIONS.has(action);
+ const {data:result,error}=await supabase.rpc(dedicated?'club_'+action:OPERATIONS.has(action)?'club_operations':'club_action',dedicated?{payload}:{action,payload});
+ if (error?.code==='PGRST202') throw Error('資料庫尚未更新到目前版本，請聯絡管理者。');
+ if (error) throw error;
+ return {snapshot:await getSnapshot(),result};
+}
+
+export async function login(username,password){username=username.trim();const email=username.includes('@')?username:`${username}@test.aimen.invalid`;const {data,error}=await supabase.auth.signInWithPassword({email,password});if(error)throw Error('登入失敗，請確認帳號與密碼；若帳號尚未建立，請聯絡管理者。');return data;}
