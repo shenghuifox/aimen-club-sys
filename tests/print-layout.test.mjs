@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
+import {execFileSync,spawnSync} from 'node:child_process';
 import {mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -44,6 +44,11 @@ test('Chrome 實際列印 PDF，以 A4 輸出單頁完整報表',{skip:!process.
    const a=Number(match[1]),b=Number(match[2]);
    assert.ok(Math.abs(Math.min(a,b)-595)<2&&Math.abs(Math.max(a,b)-842)<2);
    assert.equal(a<b?'portrait':'landscape',orientation);
+   const text=spawnSync('pdftotext',[pdf,'-'],{encoding:'utf8'});
+   if(!text.error){
+    assert.equal(text.status,0);
+    assert.match(text.stdout,/版本\s*2/);
+   }
   }
  }finally{rmSync(root,{recursive:true,force:true});}
 });

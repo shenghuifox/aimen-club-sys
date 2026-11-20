@@ -61,15 +61,15 @@ export function reportHtml(snapshot,kind,id='預覽',demo=false){
  .school,.demo{text-align:center;font-weight:bold}.demo{color:#a33}.toolbar{text-align:center;margin:12px}.toolbar button{padding:7px 12px}
  footer{font-size:9px;overflow-wrap:anywhere}
  @page{size:A4 ${orientation};margin:10mm}
- @media print{.toolbar{display:none}.paper{zoom:var(--print-scale,1)}}
+ @media print{.toolbar{display:none}.page-frame{position:relative;height:${maxHeight}mm;overflow:hidden}.paper{position:absolute;left:50%;margin:0;transform-origin:top center;transform:translateX(-50%) scale(var(--print-scale,1))}}
  </style></head><body><div class="toolbar"><button onclick="window.print()">列印／另存 PDF</button></div>
- <main class="paper">${demo?'<p class="demo">試用資料・不得作為正式核銷憑據</p>':''}
- ${sign?signHtml(snapshot):payrollHtml(snapshot)}<footer>版本 2 · ${e(id)}</footer></main>
+ <div class="page-frame"><main class="paper">${demo?'<p class="demo">試用資料・不得作為正式核銷憑據</p>':''}
+ ${sign?signHtml(snapshot):payrollHtml(snapshot)}<footer>版本 2 · ${e(id)}</footer></main></div>
  <script>
  const paper=document.querySelector('.paper');
  function fitPage(){
   // Use the unscaled height so repeated print previews get the same scale.
-  paper.style.setProperty('--print-scale',Math.min(1,${maxHeight}*96/25.4/Math.max(paper.offsetHeight,1)));
+  paper.style.setProperty('--print-scale',Math.min(1,${maxHeight}*96/25.4/Math.max(paper.scrollHeight+2,1)));
  }
  addEventListener('beforeprint',fitPage);
  fitPage();
