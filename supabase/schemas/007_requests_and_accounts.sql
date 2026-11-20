@@ -52,119 +52,43 @@ declare u club_private.users=club_private.actor(); a boolean; student_only boole
 end $$;
 
 
-create or replace function club_private.act(action text,payload jsonb) returns jsonb language plpgsql security definer set search_path='' as $$
-declare u club_private.users=club_private.actor(); a boolean; c club_private.clubs; s club_private.students; se club_private.sessions; l club_private.leaves; e club_private.enrollments; target club_private.users; ch club_private.changes;
- cid uuid=nullif(payload->>'club_id','')::uuid; sid uuid=nullif(payload->>'student_id','')::uuid; seid uuid=nullif(payload->>'session_id','')::uuid; rid uuid=nullif(payload->>'id','')::uuid;
- d date=(now() at time zone 'Asia/Taipei')::date; first_day date; last_day date; reviewed boolean; out_id uuid; rows jsonb; teachers jsonb; snap jsonb; total numeric; units numeric; mark text; v_roles text[];
+-- Extend attendance rules without copying the core action implementation.
+alter function club_private.act(text,jsonb) rename to act_before_weekly_attendance;
+revoke all on function club_private.act_before_weekly_attendance(text,jsonb) from public,anon,authenticated;
+
+create function club_private.act(action text,payload jsonb)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare
+ u club_private.users;
+ lesson club_private.sessions;
+ lesson_day date;
+ today date := (now() at time zone 'Asia/Taipei')::date;
 begin
- a='admin'=any(u.roles);
- -- Serialize first-release mutations, including enrollment capacity, approvals,
- -- role count and settlement locks. No network calls occur in this transaction.
- perform pg_advisory_xact_lock(148975,1);
- if action in ('admit','save_club','publish_club','add_session','review_change','settle','paper_done','roles','add_term','archive_term','add_student') and not a then raise exception '僅行政管理者可操作'; end if;
- select * into c from club_private.clubs where id=cid;
- select * into s from club_private.students where id=sid;
- select * into se from club_private.sessions where id=seid;
- if action='leave' then
-  if s.id is null or se.id is null or not club_private.can_student(s,u) then raise exception '沒有學生或課程的操作權限'; end if;
-  if not a and s.user_id is distinct from u.id and not coalesce((s.homeroom_id=u.id and 'hrtr'=any(u.roles)),false) and not exists(select 1 from club_private.clubs where id=se.club_id and teacher_id=u.id and 'clubtr'=any(u.roles)) then raise exception '沒有該社團的請假權限'; end if;
-  perform club_private.assert_open(se.club_id);
-  if not exists(select 1 from club_private.enrollments where club_id=se.club_id and student_id=s.id and status='enrolled' and (se.starts_at at time zone 'Asia/Taipei')::date between start_date and coalesce(end_date,'infinity')) then raise exception '學生未參加該次課程'; end if;
-  reviewed=a or coalesce((s.homeroom_id=u.id and 'hrtr'=any(u.roles)),false);
-  insert into club_private.leaves(session_id,student_id,kind,reason,status,created_by,reviewed_by,reviewed_at) values(se.id,s.id,payload->>'kind',payload->>'reason',case when reviewed then 'approved' else 'pending' end,u.id,case when reviewed then u.id end,case when reviewed then now() end) returning id into out_id;
- elsif action='review_leave' then
-  select * into l from club_private.leaves where id=rid; select * into s from club_private.students where id=l.student_id;
-  if l.id is null or not coalesce((a or (s.homeroom_id=u.id and 'hrtr'=any(u.roles))),false) then raise exception '沒有覆核權限'; end if;
-  if l.status<>'pending' or coalesce(payload->>'status','') not in ('approved','rejected') then raise exception '申請已處理或狀態不正確'; end if;
-  perform club_private.assert_open((select club_id from club_private.sessions where id=l.session_id));
-  update club_private.leaves set status=payload->>'status',reviewed_by=u.id,reviewed_at=now() where id=l.id;
- elsif action='enroll' then
-  if c.id is null or s.id is null or not coalesce((a or (s.user_id=u.id and 'stu'=any(u.roles))),false) or s.term_id<>c.term_id then raise exception '沒有報名權限'; end if;
-  perform club_private.assert_open(c.id);
-  if not a and (c.status<>'published' or d not between c.registration_start and c.registration_end) then raise exception '目前不在報名期間'; end if;
-  insert into club_private.enrollments(club_id,student_id,status,start_date) values(c.id,s.id,'pending',d) returning id into out_id;
- elsif action='admit' then
-  select * into e from club_private.enrollments where id=rid;
-  if e.id is null or e.status<>'pending' or coalesce(payload->>'status','') not in ('enrolled','rejected') then raise exception '報名不存在或已處理'; end if;
-  first_day=coalesce(nullif(payload->>'start_date','')::date,d); perform club_private.assert_open(e.club_id,first_day);
-  if exists(select 1 from club_private.settlements where club_id=e.club_id and end_date>=first_day) then raise exception '錄取會影響已鎖定期間'; end if;
-  if payload->>'status'='enrolled' then perform club_private.admit_check(e.club_id,e.student_id,first_day,e.id); end if;
-  update club_private.enrollments set status=payload->>'status',start_date=first_day where id=e.id;
- elsif action in ('sign_in','attendance') then
-  if se.id is null or not(a or (se.teacher_id=u.id and u.roles&&array['clubtr','hrtr']::text[])) then raise exception '沒有授課權限'; end if;
-  perform club_private.assert_open(se.club_id,(se.starts_at at time zone 'Asia/Taipei')::date);
-  if se.status='cancelled' then raise exception '課程已停課'; end if;
-  if date_trunc('week',se.starts_at at time zone 'Asia/Taipei')::date<>date_trunc('week',d::timestamp)::date
-     or (se.starts_at at time zone 'Asia/Taipei')::date>d then raise exception '只能在本週補登已到日期的課程'; end if;
-  if action='sign_in' then
-   update club_private.sessions set signed_at=coalesce(signed_at,now()) where id=se.id;
-  else
-   if se.signed_at is null or se.starts_at>now() or coalesce(trim(payload->>'summary'),'')='' then raise exception '請先完成簽到並填寫摘要，且課程必須已開始'; end if;
-   for s in select st.* from club_private.students st where exists(select 1 from club_private.enrollments en where en.student_id=st.id and en.club_id=se.club_id and en.status='enrolled' and (se.starts_at at time zone 'Asia/Taipei')::date between en.start_date and coalesce(en.end_date,'infinity')) loop
-    mark=payload->'marks'->>s.id::text;
-    if exists(select 1 from club_private.leaves where student_id=s.id and session_id=se.id and status='approved') then mark='leave'; elsif coalesce(mark,'') not in ('present','absent','late') then raise exception '請完成每位學生點名，請假需先覆核'; end if;
-    insert into club_private.attendance(session_id,student_id,status) values(se.id,s.id,mark) on conflict(session_id,student_id) do update set status=excluded.status;
-   end loop;
-   update club_private.sessions set summary=payload->>'summary',attendance_confirmed_at=now(),status='completed' where id=se.id;
-  end if;
- elsif action='save_club' then
-  if not exists(select 1 from club_private.terms where id=(payload->>'term_id')::uuid and status='active') then raise exception '學期不存在或已封存'; end if;
-  if not exists(select 1 from club_private.users where id=(payload->>'teacher_id')::uuid and active and roles&&array['admin','clubtr','hrtr']::text[]) then raise exception '授課教師無效'; end if;
-  insert into club_private.clubs(term_id,name,plan_name,description,kind,teacher_id,location,capacity,rate,funding_source,registration_start,registration_end) values((payload->>'term_id')::uuid,payload->>'name',payload->>'plan_name',coalesce(payload->>'description',''),payload->>'kind',(payload->>'teacher_id')::uuid,payload->>'location',(payload->>'capacity')::integer,(payload->>'rate')::numeric,coalesce(payload->>'funding_source',''),(payload->>'registration_start')::date,(payload->>'registration_end')::date) returning id into out_id;
- elsif action='publish_club' then
-  perform club_private.assert_open(cid); update club_private.clubs set status=case when status='published' then 'draft' else 'published' end where id=cid;
- elsif action='add_session' then
-  perform club_private.assert_open(cid,((payload->>'starts_at')::timestamptz at time zone 'Asia/Taipei')::date);
-  se.id=gen_random_uuid();se.club_id=cid;se.teacher_id=(payload->>'teacher_id')::uuid;se.starts_at=(payload->>'starts_at')::timestamptz;se.ends_at=(payload->>'ends_at')::timestamptz;se.units=(payload->>'units')::numeric;se.rate=(payload->>'rate')::numeric;
-  perform club_private.check_session(se);
-  insert into club_private.sessions(id,club_id,teacher_id,starts_at,ends_at,units,rate) values(se.id,cid,se.teacher_id,se.starts_at,se.ends_at,se.units,se.rate) returning id into out_id;
- elsif action='change' then
-  if c.id is null or not(a or (c.teacher_id=u.id and 'clubtr'=any(u.roles))) then raise exception '沒有異動權限'; end if;
-  perform club_private.assert_open(cid);
-  if sid is not null and (s.id is null or s.term_id<>c.term_id or not club_private.can_student(s,u)) then raise exception '沒有學生異動權限'; end if;
-  insert into club_private.changes(club_id,kind,reason,student_id,effective_date,session_id,starts_at,ends_at,teacher_id,units,rate,status,created_by) values(cid,payload->>'kind',payload->>'reason',sid,nullif(payload->>'effective_date','')::date,seid,nullif(payload->>'starts_at','')::timestamptz,nullif(payload->>'ends_at','')::timestamptz,nullif(payload->>'teacher_id','')::uuid,nullif(payload->>'units','')::numeric,nullif(payload->>'rate','')::numeric,'pending',u.id) returning id into out_id;
-  if a then perform club_private.apply_change(out_id); end if;
- elsif action='review_change' then
-  select * into ch from club_private.changes where id=rid;
-  if ch.id is null or ch.status<>'pending' or coalesce(payload->>'status','') not in ('approved','rejected') then raise exception '異動不存在或已處理'; end if;
-  perform club_private.assert_open(ch.club_id);
-  if payload->>'status'='approved' then perform club_private.apply_change(ch.id); else update club_private.changes set status='rejected',reviewed_by=u.id where id=ch.id; end if;
- elsif action='settle' then
-  first_day=(payload->>'start_date')::date;last_day=(payload->>'end_date')::date;
-  if first_day is null or last_day is null or first_day>last_day then raise exception '核算期間不正確'; end if;
-  perform club_private.assert_open(cid);
-  if exists(select 1 from club_private.settlements where club_id=cid and start_date<=last_day and end_date>=first_day) then raise exception '與已鎖定期間重疊'; end if;
-  if not exists(select 1 from club_private.sessions where club_id=cid and status<>'cancelled' and (starts_at at time zone 'Asia/Taipei')::date between first_day and last_day) then raise exception '期間沒有可核算課程'; end if;
-  if exists(select 1 from club_private.sessions where club_id=cid and status<>'cancelled' and (starts_at at time zone 'Asia/Taipei')::date between first_day and last_day and (status<>'completed' or signed_at is null or attendance_confirmed_at is null or trim(summary)='')) then raise exception '期間內仍有未完成簽到、點名或摘要的課程'; end if;
-  select jsonb_agg(to_jsonb(x) order by x.starts_at),sum(x.amount),sum(x.units) into rows,total,units from (
-   select course.*,teacher.name as teacher_name,round(course.units*course.rate) as amount,(select count(*) from club_private.attendance where session_id=course.id and status in ('present','late')) as attendance_count from club_private.sessions course join club_private.users teacher on teacher.id=course.teacher_id where course.club_id=cid and course.status<>'cancelled' and (course.starts_at at time zone 'Asia/Taipei')::date between first_day and last_day
-  ) x;
-  select jsonb_agg(to_jsonb(x)) into teachers from (select course.teacher_id,teacher.name,course.rate,sum(course.units) as units,sum(round(course.units*course.rate)) as amount from club_private.sessions course join club_private.users teacher on teacher.id=course.teacher_id where course.club_id=cid and course.status<>'cancelled' and (course.starts_at at time zone 'Asia/Taipei')::date between first_day and last_day group by course.teacher_id,teacher.name,course.rate) x;
-  snap=jsonb_build_object('school','隘門國民小學','club',to_jsonb(c),'start_date',first_day,'end_date',last_day,'rows',rows,'teachers',teachers,'total',total,'units',units,'template_version',1);
-  insert into club_private.settlements(club_id,start_date,end_date,snapshot,created_by) values(cid,first_day,last_day,snap,u.id) returning id into out_id;
- elsif action='paper_done' then
-  update club_private.settlements set paper_done=not paper_done where id=rid; if not found then raise exception '找不到核銷'; end if;
- elsif action='roles' then
-  select * into target from club_private.users where id=rid;
-  select array_agg(value) into v_roles from jsonb_array_elements_text(payload->'roles');
-  if target.id is null or coalesce(cardinality(v_roles),0)=0 or not v_roles<@array['admin','stu','clubtr','hrtr']::text[] then raise exception '角色不正確'; end if;
-  if 'admin'=any(target.roles) and not 'admin'=any(v_roles) and (select count(*) from club_private.users where active and 'admin'=any(users.roles))<=2 then raise exception '需保留至少兩位管理者，請先完成交接'; end if;
-  update club_private.users set roles=v_roles where id=rid;
- elsif action='add_term' then
-  insert into club_private.terms(name,start_date,end_date) values(payload->>'name',(payload->>'start_date')::date,(payload->>'end_date')::date) returning id into out_id;
- elsif action='archive_term' then
-  update club_private.terms set status='archived' where id=rid; if not found then raise exception '學期不存在'; end if;
- elsif action='add_student' then
-  if not exists(select 1 from club_private.terms where id=(payload->>'term_id')::uuid and status='active') then raise exception '學期不存在或已封存'; end if;
-  if nullif(payload->>'homeroom_id','') is not null and not exists(select 1 from club_private.users where id=(payload->>'homeroom_id')::uuid and active and 'hrtr'=any(roles)) then raise exception '導師帳號無效'; end if;
-  if nullif(payload->>'user_id','') is not null and not exists(select 1 from club_private.users where id=(payload->>'user_id')::uuid and active and 'stu'=any(roles)) then raise exception '學生帳號無效'; end if;
-  insert into club_private.students(term_id,user_id,name,class_name,number,homeroom_id) values((payload->>'term_id')::uuid,nullif(payload->>'user_id','')::uuid,payload->>'name',payload->>'class_name',payload->>'number',nullif(payload->>'homeroom_id','')::uuid) returning id into out_id;
- else raise exception '不支援的操作';
+ if action not in ('sign_in','attendance') then
+  return club_private.act_before_weekly_attendance(action,payload);
  end if;
+ perform pg_advisory_xact_lock(148975,1);
+ u:=club_private.actor();
+ select * into lesson from club_private.sessions where id=(payload->>'session_id')::uuid;
+ if not found or not ('admin'=any(u.roles) or (lesson.teacher_id=u.id and u.roles&&array['clubtr','hrtr']::text[]))
+ then raise exception '沒有授課權限'; end if;
+ lesson_day:=(lesson.starts_at at time zone 'Asia/Taipei')::date;
+ if lesson_day>today or date_trunc('week',lesson_day::timestamp)<>date_trunc('week',today::timestamp)
+ then raise exception '只能在本週補登已到日期的課程'; end if;
+ if action='attendance' or lesson_day=today then
+  return club_private.act_before_weekly_attendance(action,payload);
+ end if;
+ perform club_private.assert_open(lesson.club_id,lesson_day);
+ if lesson.status='cancelled' then raise exception '課程已停課'; end if;
+ update club_private.sessions set signed_at=coalesce(signed_at,now()) where id=lesson.id;
  insert into club_private.audit(action,created_by) values(action,u.id);
- return jsonb_build_object('ok',true,'id',out_id);
+ return jsonb_build_object('ok',true,'id',null);
 end $$;
--- Bootstrap is service-role only; never available to browser users.
+revoke all on function club_private.act(text,jsonb) from public,anon,authenticated;
+grant execute on function club_private.act(text,jsonb) to authenticated;
+
+create or replace function public.club_action(action text,payload jsonb)
+returns jsonb language sql security invoker set search_path='' as $$ select club_private.act(action,payload) $$;
 
 create function club_private.followup(action text,payload jsonb)
 returns jsonb language plpgsql security definer set search_path='' as $$

@@ -289,15 +289,22 @@ await check('社團老師可撤回自己尚未確認的異動，行政保留異�
 await check('本週可補登、完成點名，往週及非任課者被拒絕',async()=>{
  await db.exec('reset role');
  const dates=(await db.query(`select (now() at time zone 'Asia/Taipei')::date today,
+  date_trunc('week',now() at time zone 'Asia/Taipei')::date week_start,
   date_trunc('week',now() at time zone 'Asia/Taipei')::date-1 previous`)).rows[0];
  const add=async date=>(await db.query(`insert into club_private.sessions(club_id,teacher_id,starts_at,ends_at,units,rate)
  values($1,$2,$3::date::timestamp at time zone 'Asia/Taipei',($3::date::timestamp + interval '1 hour') at time zone 'Asia/Taipei',1,400) returning id`,
  [cid,ids.clubtr,date])).rows[0].id;
  const lesson=await add(dates.today),old=await add(dates.previous);
+ const makeup=dates.week_start===dates.today?null:await add(dates.week_start);
  await as('stu');
  await assert.rejects(()=>act('sign_in',{session_id:lesson}));
  await as('clubtr');
  await assert.rejects(()=>act('sign_in',{session_id:old}));
+ await assert.rejects(()=>db.query(`select club_private.act_before_weekly_attendance('sign_in','{}')`),/permission denied/);
+ if(makeup){
+  await act('sign_in',{session_id:makeup});
+  await act('attendance',{session_id:makeup,summary:'補登週一課程',marks:{[sid]:'present'}});
+ }
  await act('sign_in',{session_id:lesson});
  await act('attendance',{session_id:lesson,summary:'完成課程',marks:{[sid]:'present'}});
  assert.equal((await snapshot()).sessions.find(s=>s.id===lesson).status,'completed');

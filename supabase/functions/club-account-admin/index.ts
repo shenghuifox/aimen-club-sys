@@ -10,6 +10,7 @@ const headers = {
   "Cache-Control": "no-store",
 };
 const reply = (data: unknown, status = 200) => Response.json(data, { status, headers });
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
@@ -25,11 +26,15 @@ Deno.serve(async (request) => {
   try {
     const body = await request.json();
     if (!body || !["invite", "email", "password"].includes(body.action) ||
-        (body.action !== "invite" && !body.id)) return reply({ error: "請確認帳號操作" }, 400);
-    const { error: permissionError } = await user.rpc("club_followup", {
-      action: "auth_account", payload: { id: body.id || null },
+        (body.action !== "invite" && (typeof body.id !== "string" || !uuid.test(body.id)))) return reply({ error: "請確認帳號操作" }, 400);
+    const { data: permission, error: permissionError } = await user.rpc("club_followup", {
+      action: "auth_account", payload: { id: body.action === "invite" ? null : body.id },
     });
     if (permissionError) return reply({ error: permissionError.message }, 403);
+    const targetId = permission?.id;
+    if (body.action === "invite" ? permission?.authorized !== true : targetId !== body.id.toLowerCase()) {
+      return reply({ error: "沒有操作此帳號的權限" }, 403);
+    }
 
     const auth = createClient(url, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
       auth: { persistSession: false, autoRefreshToken: false },
@@ -55,12 +60,12 @@ Deno.serve(async (request) => {
           new TextEncoder().encode(body.password).length > 72) {
         return reply({ error: "臨時密碼須至少 12 字元，且不可超過 72 個位元組。" }, 400);
       }
-      const { error } = await auth.updateUserById(body.id, { password: body.password });
+      const { error } = await auth.updateUserById(targetId, { password: body.password });
       if (error) return reply({ error: "無法重設密碼，請確認登入服務及密碼規則。" }, 400);
       return reply({ message: "密碼已重設，請安全交付給帳號持有人。" });
     }
     if (body.confirmed !== true) return reply({ error: "請先核對新電子郵件的持有人" }, 400);
-    const { error } = await auth.updateUserById(body.id, { email, email_confirm: true });
+    const { error } = await auth.updateUserById(targetId, { email, email_confirm: true });
     if (error) return reply({ error: "無法更新電子郵件。請確認電子郵件是否已被使用。" }, 400);
     return reply({ message: "登入電子郵件已更新。" });
   } catch {
