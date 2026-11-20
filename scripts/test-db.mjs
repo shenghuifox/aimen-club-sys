@@ -230,7 +230,8 @@ await check('家長只讀已綁定孩子的資料，請假進入導師覆核',as
  await as('guardian');
  const mine=await snapshot();
  assert.deepEqual(mine.students.map(s=>s.id),[sid]);
- assert.deepEqual(mine.users.map(u=>u.id),[ids.guardian]);
+ assert.deepEqual(mine.users.map(u=>u.id).sort(),[ids.clubtr,ids.guardian].sort());
+ assert.equal(mine.users.find(u=>u.id===ids.clubtr).username,null);
  assert.equal(mine.enrollments.find(e=>e.student_id===sid).fee_status,'paid');
  assert.ok(mine.clubs.every(c=>!('rate' in c)&&!('activity_ref' in c)));
  const leave={session_id:item.id,student_id:sid,kind:'事假',reason:'家庭事務測試'};
