@@ -12,7 +12,7 @@
 
 ## 第一次安裝 Supabase
 
-1. 在專案 eddaalutgxmanorbfrbm 的 SQL Editor，以管理者依序執行 `supabase/schemas/001_club.sql` **一次**、`002_recurring_and_student_binding.sql`、`003_edit_changes.sql`、`004_bulk_administration.sql`。已安裝 0.3.0 者只需升級 004，先更新資料庫再部署前端。已透過 Supabase 遷移套用者不需重複執行。
+1. 在專案 eddaalutgxmanorbfrbm 的 SQL Editor，以管理者依序執行 `supabase/schemas/001_club.sql` **一次**、`002_recurring_and_student_binding.sql`、`003_edit_changes.sql`、`004_bulk_administration.sql`、`005_club_operations.sql`。由 0.3.0 依序套用 004、005，先更新資料庫再部署前端。已透過 Supabase 遷移套用者不需重複執行。
 2. 在可信任的本機環境設定 `SUPABASE_SECRET_KEY`（伺服器 secret / legacy service_role key），執行 `node scripts/bootstrap.mjs`。金鑰不應貼在聊天、放入 VITE_ 變數或提交 GitHub。
 3. 建立後，四個帳號的隨機密碼會保存到本機 `credentials-test-accounts.json`（已加入 gitignore）。帳號會映射成 `帳號@test.aimen.invalid`。此網域僅用於獨立測試，不支援收信或自助重設。
 4. admin 登入後建立社團、上課節次、學生名冊，將 stu 綁定學生、hrtr 指定為導師。核對課程與權限後進行試辦。
@@ -28,7 +28,14 @@ Node 22 以上，pnpm 11.25.0。`pnpm install`、`pnpm test`、`pnpm test:db`、
 
 main 推送後，`.github/workflows/pages.yml` 執行單元與資料庫測試，再建置部署。GitHub Settings → Pages → Source 須選 GitHub Actions。
 
-## 0.4.0 行政操作
+## 0.5.0 試辦操作
+
+- 異動管理可停課、從已停課節次排定補課，或互換兩個未簽到節次的開始時間。原節次與異動紀錄保留，核銷鎖定和撞課由資料庫查核。
+- 社團老師可從首頁進入今日授課、簽到及點名。名冊可搜尋班級、學生或社團。
+- 行政可設定候補及手動登記繳費。學生帳號可查自己的報名結果與繳費狀態。
+- 已鎖定且尚未完成紙本作業的核銷可由行政填寫原因作廢。原快照保留在作廢紀錄，可更正後重新核算。正式核銷前應由會計與出納確認流程及 Excel 試印。
+
+## 批次行政與 Excel 核銷
 
 - **權限管理 → 批次匯入帳號**。下載 CSV 範本，填寫帳號、姓名、角色、班級、座號。支援 UTF-8 CSV 和試算表貼上，最多 200 筆。學生的班級、座號、姓名須符合所選學期的名冊。社團老師與班級導師的班級及座號留空。匯入不授予行政角色。
 - **帳號啟用**。已有且已驗證的 Supabase Auth 電子郵件會立即綁定；既有試用帳號可用短帳號。其他電子郵件會列為待啟用。需要先在 Supabase Auth 建立並驗證登入帳號，或經學校已啟用的 Google 登入驗證身分，首次登入時才會開通。這個匯入流程不寄信、不發密碼。輸入錯誤可由行政取消待啟用設定。
@@ -46,7 +53,7 @@ main 推送後，`.github/workflows/pages.yml` 執行單元與資料庫測試，
 - 已實作：入口網、週課表、社團建立／報名／錄取、名冊 CSV、請假覆核、授課簽到與點名、學生增退與代調課、每週安排調整、分期核銷快照與列印、角色及學期設定。
 - 簽到表包含出席學生數、系統簽到時間、紙本親簽欄、承辦人確認後核章；鐘點費清冊合併多位教師，依費率分列。
 - 週次調整目前對選定節次及後續未授課節次套用相同時間位移；複雜多時段課程請分次確認。
-- 尚待完成驗收：完整個人與班級 PDF 匯出、課程設定編輯與批次匯入、核銷作廢更正、停課與雙向交換流程、Email／推播、備份還原演練。請勿直接作正式財務核銷。
+- 尚待完成驗收：完整個人與班級 PDF 匯出、課程設定編輯與批次匯入、Email／推播、備份還原演練。請勿直接作正式財務核銷。
 - 核銷鎖定時儲存不可變更的 JSON 資料快照，文件由快照產生；尚未保存 PDF 檔本體，印領清冊僅帶入核銷需要的教師姓名及授課明細。
 - 初版對業務異動採單一交易鎖以避免超收及重複結算，適合單校試辦；擴大前需負載測試。
 - 所有應用資料表位於不公開 schema 並啟用 RLS、對前台禁止直接存取。具明確授權檢查的 RPC 為唯一讀寫入口；使用者角色由資料庫管理。

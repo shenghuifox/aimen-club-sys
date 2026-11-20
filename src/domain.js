@@ -1,5 +1,7 @@
 export const ROLE_NAMES={admin:'行政管理',stu:'學生',clubtr:'社團老師',hrtr:'班級導師'};
-export const STATUS_NAMES={pending:'未確認',approved:'已確認',rejected:'未通過',enrolled:'已錄取',withdrawn:'已退出',scheduled:'待上課',completed:'已完成',cancelled:'已停課',locked:'已鎖定',draft:'草稿',published:'已開放',archived:'已封存',present:'出席',absent:'缺席',late:'遲到',leave:'請假'};
+export const STATUS_NAMES={pending:'未確認',waitlisted:'候補',approved:'已確認',rejected:'未通過',enrolled:'已錄取',withdrawn:'已退出',scheduled:'待上課',completed:'已完成',cancelled:'已停課',locked:'已鎖定',draft:'草稿',published:'已開放',archived:'已封存',present:'出席',absent:'缺席',late:'遲到',leave:'請假'};
+export const FEE_NAMES={pending:'待繳',paid:'已繳',overdue:'逾期待處理'};
+export const SCHEDULE_NAMES={cancel:'停課',makeup:'補課',swap:'雙向調課'};
 export const has=(user,role)=>user?.roles?.includes(role);
 export const dateKey=(d=new Date())=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
 export function addDays(date,n){const d=new Date(date+'T12:00:00+08:00');d.setUTCDate(d.getUTCDate()+n);return dateKey(d);}

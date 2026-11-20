@@ -12,6 +12,7 @@ await db.exec(await fs.readFile(new URL('../supabase/schemas/001_club.sql',impor
 await db.exec(await fs.readFile(new URL('../supabase/schemas/002_recurring_and_student_binding.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../supabase/schemas/003_edit_changes.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../supabase/schemas/004_bulk_administration.sql',import.meta.url),'utf8'));
+await db.exec(await fs.readFile(new URL('../supabase/schemas/005_club_operations.sql',import.meta.url),'utf8'));
 const ids={admin:'00000000-0000-0000-0000-000000000001',stu:'00000000-0000-0000-0000-000000000002',clubtr:'00000000-0000-0000-0000-000000000003',hrtr:'00000000-0000-0000-0000-000000000004',other:'00000000-0000-0000-0000-000000000005'};
 for(const [role,id] of Object.entries(ids)){await db.query('insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())',[id,role+'@test.aimen.invalid']);await db.query('insert into club_private.users(id,username,name,roles) values($1,$2,$2,$3)',[id,role,[role==='other'?'stu':role]]);}
 const as=async(role)=>{await db.exec('reset role');await db.query("select set_config('request.jwt.claim.sub',$1,false)",[ids[role]||'']);await db.exec('set role '+(role==='anon'?'anon':'authenticated'));};
@@ -152,5 +153,51 @@ await check('批次錄取超額回滾，批次加入與退選保留歷史',async
  assert.deepEqual(await batch(roomy,'add_student',[sid],'2026-12-07'),{count:1});
  assert.deepEqual(await batch(roomy,'remove_student',[sid],'2026-12-07'),{count:1});
  assert.equal((await snapshot()).enrollments.find(e=>e.club_id===roomy&&e.start_date==='2026-12-07').status,'withdrawn');
+});
+const operation=(action,payload)=>db.query('select public.club_operations($1,$2)',[action,JSON.stringify(payload)]);
+await check('停課保留原節次、補課沿用費率且禁止重排',async()=>{
+ await as('admin');
+ const original=(await snapshot()).sessions.find(s=>s.club_id===cid&&s.status==='scheduled'&&!s.signed_at);
+ const payload={session_id:original.id,reason:'天候停課',starts_at:'2027-01-21T15:30:00+08:00',ends_at:'2027-01-21T16:10:00+08:00'};
+ await as('stu');
+ await assert.rejects(()=>operation('cancel',payload));
+ await as('admin');
+ await operation('cancel',payload);
+ assert.equal((await snapshot()).sessions.find(s=>s.id===original.id).status,'cancelled');
+ await operation('makeup',payload);
+ await assert.rejects(()=>operation('makeup',payload));
+ const after=await snapshot();
+ const makeup=after.sessions.find(s=>+new Date(s.starts_at)===+new Date(payload.starts_at));
+ assert.equal(makeup.rate,original.rate);
+ assert.equal(makeup.status,'scheduled');
+ const other=after.sessions.find(s=>s.club_id===cid&&s.id!==makeup.id&&s.status==='scheduled'&&!s.signed_at);
+ await operation('swap',{session_id:makeup.id,other_id:other.id,reason:'兩節互換'});
+ assert.equal((await snapshot()).sessions.find(s=>s.id===other.id).starts_at,makeup.starts_at);
+});
+await check('候補與繳費狀態，學生僅見自己的結果',async()=>{
+ await as('admin');
+ const entries=(await snapshot()).enrollments.filter(e=>e.club_id===cid);
+ const waiting=entries.find(e=>e.student_id===sid2);
+ await db.query('select public.club_batch_roster($1)',[{club_id:cid,operation:'waitlisted',ids:[waiting.id]}]);
+ const accepted=entries.find(e=>e.student_id===sid);
+ await operation('fee_status',{id:accepted.id,status:'paid'});
+ await as('stu');
+ const mine=await snapshot();
+ assert.equal(mine.enrollments.find(e=>e.id===accepted.id).fee_status,'paid');
+ assert.ok(!mine.enrollments.some(e=>e.id===waiting.id));
+ await assert.rejects(()=>operation('fee_status',{id:accepted.id,status:'overdue'}));
+ await as('other');
+ assert.equal((await snapshot()).enrollments.find(e=>e.id===waiting.id).status,'waitlisted');
+});
+await check('核銷作廢保留快照，且可重新鎖定',async()=>{
+ await as('admin');
+ const old=(await snapshot()).settlements[0];
+ await operation('void_settlement',{id:old.id,reason:'資料更正'});
+ const next=await snapshot();
+ assert.ok(!next.settlements.some(b=>b.id===old.id));
+ assert.deepEqual(next.voided_settlements.find(b=>b.id===old.id).snapshot,old.snapshot);
+ await act('settle',{club_id:old.club_id,start_date:old.start_date,end_date:old.end_date});
+ await as('stu');
+ assert.deepEqual((await snapshot()).voided_settlements,[]);
 });
 await db.close();console.log(`${count} database security scenarios passed`);

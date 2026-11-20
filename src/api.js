@@ -16,6 +16,8 @@ export async function getLoginSnapshot() {
  return getSnapshot();
 }
 
+const OPERATIONS=new Set(['cancel','makeup','swap','fee_status','void_settlement']);
+
 export async function runAction(mode,data,user,action,payload) {
  if (mode==='demo') {
   const snapshot=demoAction(data,user,action,payload);
@@ -23,7 +25,7 @@ export async function runAction(mode,data,user,action,payload) {
   return {snapshot};
  }
  const dedicated=RPC_ACTIONS.has(action);
- const {data:result,error}=await supabase.rpc(dedicated?'club_'+action:'club_action',dedicated?{payload}:{action,payload});
+ const {data:result,error}=await supabase.rpc(dedicated?'club_'+action:OPERATIONS.has(action)?'club_operations':'club_action',dedicated?{payload}:{action,payload});
  if (error?.code==='PGRST202') throw Error('資料庫尚未更新到目前版本，請聯絡管理者。');
  if (error) throw error;
  return {snapshot:await getSnapshot(),result};

@@ -48,7 +48,7 @@ export function demoAction(data,user,action,p){
   if (!club) fail('請選擇社團。');
   termOpen(club.id);
   const term=d.terms.find(t=>t.id===club.term_id);
-  if (p.operation!=='rejected') {
+  if (!['rejected','waitlisted'].includes(p.operation)) {
    if (!p.effective_date||p.effective_date<term.start_date||p.effective_date>term.end_date) fail('生效日期須在社團所屬學期內。');
    if (d.sessions.some(s=>s.club_id===club.id && s.status!=='cancelled' &&
        (s.signed_at||s.status==='completed') && dateKey(new Date(s.starts_at))>=p.effective_date)) fail('生效日會影響已授課的課程。');
@@ -56,9 +56,14 @@ export function demoAction(data,user,action,p){
   }
   if (!p.ids.length||p.ids.length>200||new Set(p.ids).size!==p.ids.length) fail('每批可處理 1 至 200 位不同的學生。');
   return p.ids.reduce((current,target)=>{
-   if (['enrolled','rejected'].includes(p.operation)) {
-    const e=current.enrollments.find(e=>e.id===target&&e.club_id===club.id&&e.status==='pending');
+   if (['enrolled','rejected','waitlisted'].includes(p.operation)) {
+    const e=current.enrollments.find(e=>e.id===target&&e.club_id===club.id&&['pending','waitlisted'].includes(e.status)&&e.status!==p.operation);
     if (!e) fail('有報名已處理或不屬於選定社團。');
+    if(p.operation==='waitlisted'){
+     e.status='waitlisted';
+     return current;
+    }
+    e.status='pending';
     return demoAction(current,user,'admit',{id:target,status:p.operation,start_date:p.effective_date||e.start_date});
    }
    if (!['add_student','remove_student'].includes(p.operation)||!p.reason?.trim()) fail('請選擇增退方式並填寫異動原因。');
@@ -86,7 +91,7 @@ export function demoAction(data,user,action,p){
  }else if(action==='enroll'){
   if(!club||!student||(!isAdmin&&student.user_id!==user.id))fail('沒有報名權限。');termOpen(club.id);
   if(!isAdmin&&(club.status!=='published'||dateKey()<club.registration_start||dateKey()>club.registration_end))fail('目前不在報名期間。');
-  if(d.enrollments.some(e=>e.club_id===club.id&&e.student_id===student.id&&e.status!=='withdrawn'))fail('已有報名紀錄。');
+  if(d.enrollments.some(e=>e.club_id===club.id&&e.student_id===student.id&&['pending','waitlisted','enrolled'].includes(e.status)&&!e.end_date))fail('已有報名紀錄。');
   d.enrollments.push({id:id(),club_id:club.id,student_id:student.id,status:'pending',start_date:dateKey(),end_date:null});
  }else if(action==='admit'){
   requireAdmin();const e=d.enrollments.find(x=>x.id===p.id);if(!e)fail('找不到報名。');const c=d.clubs.find(c=>c.id===e.club_id);termOpen(c.id);
@@ -137,6 +142,67 @@ export function demoAction(data,user,action,p){
  }else if(action==='settle'){
   requireAdmin();if(!club)fail('找不到社團。');termOpen(club.id);const snapshot=settlementPreview(d,p.club_id,p.start_date,p.end_date);d.settlements.push({id:id(),club_id:p.club_id,start_date:p.start_date,end_date:p.end_date,snapshot,created_at:now,created_by:user.id,paper_done:false,status:'locked'});
  }else if(action==='paper_done'){requireAdmin();const b=d.settlements.find(x=>x.id===p.id);if(!b)fail('找不到核銷。');b.paper_done=!b.paper_done;
+ }else if(action==='fee_status'){
+  requireAdmin();
+  const entry=d.enrollments.find(e=>e.id===p.id&&e.status==='enrolled');
+  if(!entry||!['','pending','paid','overdue'].includes(p.status))fail('請確認錄取及繳費狀態。');
+  termOpen(entry.club_id);
+  entry.fee_status=p.status||null;
+ }else if(action==='void_settlement'){
+  requireAdmin();
+  const bill=d.settlements.find(b=>b.id===p.id);
+  if(!bill||bill.paper_done||!p.reason?.trim())fail('請確認核銷尚未完成紙本作業並填寫原因。');
+  termOpen(bill.club_id);
+  d.voided_settlements??=[];
+  d.voided_settlements.unshift({...bill,voided_at:now,voided_by:user.id,void_reason:p.reason.trim()});
+  d.settlements=d.settlements.filter(b=>b.id!==bill.id);
+ }else if(['cancel','makeup','swap'].includes(action)){
+  requireAdmin();
+  const day=s=>dateKey(new Date(s.starts_at));
+  const checkSource=(s,status)=>{
+   if(!s||s.status!==status||s.signed_at)fail('請選擇未簽到且符合異動條件的節次。');
+   termOpen(s.club_id);
+   unlocked(s.club_id,day(s));
+  };
+  const checkTime=s=>{
+   if(!(new Date(s.ends_at)>new Date(s.starts_at)))fail('時間不正確。');
+   unlocked(s.club_id,day(s));
+   const term=d.terms.find(t=>t.id===d.clubs.find(c=>c.id===s.club_id)?.term_id);
+   if(day(s)<term.start_date||dateKey(new Date(s.ends_at))>term.end_date)fail('上課日期超出學期。');
+   const roster=cid=>d.enrollments.filter(e=>e.club_id===cid&&enrolledOn(e,day(s))).map(e=>e.student_id);
+   const students=roster(s.club_id);
+   if(d.sessions.some(x=>x.id!==s.id&&x.status!=='cancelled'&&intersects(x,s)&&
+     (x.teacher_id===s.teacher_id||x.club_id===s.club_id||roster(x.club_id).some(sid=>students.includes(sid)))))fail('教師、社團或學生時間衝突。');
+  };
+  const record=(original,next)=>d.changes.unshift({id:id(),club_id:original.club_id,session_id:original.id,kind:action,
+   reason:p.reason.trim(),starts_at:next.starts_at,ends_at:next.ends_at,original_dates:[original.starts_at],
+   status:'approved',created_by:user.id,reviewed_by:user.id,created_at:now});
+  if(!p.reason?.trim())fail('請填寫異動原因。');
+  checkSource(session,action==='makeup'?'cancelled':'scheduled');
+  if(action==='cancel'){
+   session.status='cancelled';
+   record(session,session);
+  }else if(action==='makeup'){
+   if(d.changes.some(c=>c.kind==='makeup'&&c.session_id===session.id))fail('此節次已排定補課。');
+   const next={...session,id:id(),starts_at:p.starts_at,ends_at:p.ends_at,status:'scheduled'};
+   checkTime(next);
+   d.sessions.push(next);
+   record(session,next);
+  }else{
+   const other=d.sessions.find(s=>s.id===p.other_id);
+   checkSource(other,'scheduled');
+   if(other.id===session.id||d.clubs.find(c=>c.id===other.club_id)?.term_id!==d.clubs.find(c=>c.id===session.club_id)?.term_id||
+      d.leaves.some(l=>[session.id,other.id].includes(l.session_id)&&l.status!=='rejected'))fail('請選擇同學期且無有效假單的兩個節次。');
+   const move=(s,start)=>({...s,starts_at:start,ends_at:new Date(new Date(start).getTime()+new Date(s.ends_at)-new Date(s.starts_at)).toISOString()});
+   const next=move(session,other.starts_at), swapped=move(other,session.starts_at);
+   other.status='cancelled';
+   checkTime(next);
+   record(session,next);
+   Object.assign(session,next);
+   checkTime(swapped);
+   record(other,swapped);
+   Object.assign(other,swapped);
+  }
  }else if(action==='roles'){
   requireAdmin();const target=d.users.find(u=>u.id===p.id);if(!target)fail('找不到使用者。');if(!p.roles?.length||p.roles.some(r=>!['admin','stu','clubtr','hrtr'].includes(r)))fail('請至少指定一個有效角色。');if(target.roles.includes('admin')&&!p.roles.includes('admin')&&d.users.filter(u=>u.roles.includes('admin')).length<=2)fail('需保留至少兩位權限管理者，請先完成交接。');target.roles=p.roles;
  }else if(action==='add_term'){
