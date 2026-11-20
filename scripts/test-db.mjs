@@ -2,12 +2,18 @@ import {PGlite} from '@electric-sql/pglite';
 import fs from 'node:fs/promises';
 import assert from 'node:assert/strict';
 const db=new PGlite();
-await db.exec(`create role anon;create role authenticated;create role service_role;create schema auth;create table auth.users(id uuid primary key);create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;grant usage on schema auth to authenticated;grant execute on function auth.uid() to authenticated;`);
+await db.exec(`
+ create role anon; create role authenticated; create role service_role; create schema auth;
+ create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,deleted_at timestamptz,banned_until timestamptz);
+ create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
+ grant usage on schema auth to authenticated; grant execute on function auth.uid() to authenticated;
+`);
 await db.exec(await fs.readFile(new URL('../supabase/schemas/001_club.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../supabase/schemas/002_recurring_and_student_binding.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../supabase/schemas/003_edit_changes.sql',import.meta.url),'utf8'));
+await db.exec(await fs.readFile(new URL('../supabase/schemas/004_bulk_administration.sql',import.meta.url),'utf8'));
 const ids={admin:'00000000-0000-0000-0000-000000000001',stu:'00000000-0000-0000-0000-000000000002',clubtr:'00000000-0000-0000-0000-000000000003',hrtr:'00000000-0000-0000-0000-000000000004',other:'00000000-0000-0000-0000-000000000005'};
-for(const [role,id] of Object.entries(ids)){await db.query('insert into auth.users values($1)',[id]);await db.query('insert into club_private.users(id,username,name,roles) values($1,$2,$2,$3)',[id,role,[role==='other'?'stu':role]]);}
+for(const [role,id] of Object.entries(ids)){await db.query('insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())',[id,role+'@test.aimen.invalid']);await db.query('insert into club_private.users(id,username,name,roles) values($1,$2,$2,$3)',[id,role,[role==='other'?'stu':role]]);}
 const as=async(role)=>{await db.exec('reset role');await db.query("select set_config('request.jwt.claim.sub',$1,false)",[ids[role]||'']);await db.exec('set role '+(role==='anon'?'anon':'authenticated'));};
 const act=async(action,payload)=>(await db.query('select public.club_action($1,$2) as result',[action,JSON.stringify(payload)])).rows[0].result;
 const snapshot=async()=>(await db.query('select public.club_snapshot() as result')).rows[0].result;
@@ -84,5 +90,67 @@ await check('編修衝突整筆回滾，已授課或鎖定不可覆寫',async()=
  assert.equal((await snapshot()).changes.length,before);
  await db.exec('reset role');await db.query("update club_private.sessions set signed_at=starts_at where id=$1",[editPayload.session_id]);await as('admin');
  await assert.rejects(()=>edit({...editPayload,id:revisionId,expected_revision:1}));
+});
+const importAccounts=async rows=>(await db.query('select public.club_import_accounts($1) result',[{term_id:term,rows}])).rows[0].result;
+const claim=()=>db.query('select public.club_claim_account()');
+ids.newStudent='00000000-0000-0000-0000-000000000006';
+ids.newTeacher='00000000-0000-0000-0000-000000000007';
+const studentImport={email:'school-student@example.test',name:'待綁定學生',role:'stu',class_name:'四甲',number:'02'};
+const teacherImport={email:'school-teacher@example.test',name:'既有教師',role:'clubtr'};
+await check('批次匯入僅供行政，錯誤列會回滾，已驗證帳號立即綁定',async()=>{
+ await db.exec('reset role');
+ await db.query('insert into auth.users(id,email,email_confirmed_at) values($1,$2,null),($3,$4,now())',
+  [ids.newStudent,studentImport.email,ids.newTeacher,teacherImport.email]);
+ await as('admin');
+ await act('add_student',{term_id:term,name:studentImport.name,class_name:studentImport.class_name,number:studentImport.number});
+ await as('stu');
+ await assert.rejects(()=>importAccounts([teacherImport]),/僅行政/);
+ await as('admin');
+ await assert.rejects(()=>importAccounts([teacherImport,{...studentImport,number:'99'}]),/第 2 筆/);
+ assert.ok(!(await snapshot()).users.some(u=>u.id===ids.newTeacher));
+ assert.deepEqual(await importAccounts([studentImport,teacherImport]),{bound:1,pending:1});
+ assert.deepEqual(await importAccounts([studentImport,teacherImport]),{bound:1,pending:1});
+ assert.ok((await snapshot()).users.some(u=>u.id===ids.newTeacher));
+});
+await check('未驗證帳號無法領取名冊，驗證後只能領取自己的帳號',async()=>{
+ await as('stu');await claim();
+ let view=await snapshot();
+ assert.deepEqual(view.pending_accounts,[]);
+ assert.equal(view.users.find(u=>u.id===ids.clubtr).username,null);
+ assert.equal(view.clubs[0].rate,undefined);
+ await assert.rejects(()=>db.query("select public.club_cancel_account($1)",[{email:studentImport.email}]),/僅行政/);
+ await as('newStudent');await claim();await assert.rejects(snapshot,/尚未獲授權/);
+ await db.exec('reset role');
+ await db.query('update auth.users set email_confirmed_at=now() where id=$1',[ids.newStudent]);
+ await as('newStudent');await claim();await claim();
+ view=await snapshot();
+ assert.equal(view.students.length,1);
+ assert.equal(view.students[0].name,studentImport.name);
+ await as('admin');assert.deepEqual((await snapshot()).pending_accounts,[]);
+});
+await check('批次錄取超額回滾，批次加入與退選保留歷史',async()=>{
+ await as('admin');
+ const newClub=async (name,capacity)=>(await act('save_club',{term_id:term,name,plan_name:'測試計畫',kind:'社團',
+  teacher_id:ids.clubtr,location:'教室',capacity,rate:400,funding_source:'',registration_start:'2026-08-01',registration_end:'2027-01-31'})).id;
+ const small=await newClub('名額測試',1);
+ const roomy=await newClub('批次加退選',10);
+ const one=await act('enroll',{club_id:small,student_id:sid});
+ const two=await act('enroll',{club_id:small,student_id:sid2});
+ const batch=async (club_id,operation,ids,effective_date='2026-12-01')=>(await db.query(
+  'select public.club_batch_roster($1) result',[{club_id,operation,ids,effective_date,reason:'班級名冊調整'}])).rows[0].result;
+ await as('stu');await assert.rejects(()=>batch(small,'enrolled',[one.id]),/僅行政/);
+ await as('admin');
+ await assert.rejects(()=>batch(small,'enrolled',[one.id,two.id]),/名額已滿/);
+ assert.equal((await snapshot()).enrollments.filter(e=>e.club_id===small&&e.status==='pending').length,2);
+ assert.deepEqual(await batch(small,'enrolled',[one.id]),{count:1});
+ assert.deepEqual(await batch(small,'rejected',[two.id],null),{count:1});
+ assert.deepEqual(await batch(roomy,'add_student',[sid,sid2]),{count:2});
+ assert.deepEqual(await batch(roomy,'remove_student',[sid,sid2],'2026-12-02'),{count:2});
+ const result=await snapshot();
+ assert.ok(result.enrollments.filter(e=>e.club_id===roomy).every(e=>e.end_date==='2026-12-01'));
+ assert.equal(result.changes.filter(e=>e.club_id===roomy&&e.status==='approved').length,4);
+ assert.deepEqual(await batch(roomy,'add_student',[sid],'2026-12-07'),{count:1});
+ assert.deepEqual(await batch(roomy,'remove_student',[sid],'2026-12-07'),{count:1});
+ assert.equal((await snapshot()).enrollments.find(e=>e.club_id===roomy&&e.start_date==='2026-12-07').status,'withdrawn');
 });
 await db.close();console.log(`${count} database security scenarios passed`);
