@@ -22,4 +22,10 @@ export function settlementPreview(data,clubId,start,end){
  return {club:data.clubs.find(c=>c.id===clubId),start_date:start,end_date:end,rows,teachers:Object.values(teachers),total,units:rows.reduce((n,s)=>n+Number(s.units),0),school:'隘門國民小學',template_version:1};
 }
 export function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-export function csvString(rows){return '\uFEFF'+rows.map(r=>r.map(v=>{let x=String(v??'');if(/^[=+@\-\t\r]/.test(x))x="'"+x;return '"'+x.replaceAll('"','""')+'"';}).join(',')).join('\r\n');}
+export function csvString(rows) {
+ return '\uFEFF'+rows.map(row=>row.map(value=>{
+  let cell=String(value??'');
+  if (/^[\t\r\n]|^[\s\u0000-\u001f]*[=+@\-=＋－＠＝]/u.test(cell)) cell="'"+cell;
+  return '"'+cell.replaceAll('"','""')+'"';
+ }).join(',')).join('\r\n');
+}

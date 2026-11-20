@@ -1,0 +1,19 @@
+.admin-modal .table-wrap {
+ max-height: 260px;
+}
+
+.admin-modal input[type="file"] {
+ max-width: 100%;
+}
+
+.admin-filters {
+ display: grid;
+ grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+ gap: 14px;
+ margin-bottom: 16px;
+}
+
+.panel input[type="checkbox"] {
+ width: auto;
+ accent-color: var(--green);
+}
