@@ -28,19 +28,20 @@ const snapshot={
  teachers:Array.from({length:8},(_,i)=>({teacher_id:'teacher-'+i,name:i===0?'=測試 & 教師':'教師 '+i,rate:400,units:2.5,amount:1000}))
 };
 
-test('憑證與清冊同頁，保留合計、逐日節數、擴列及防公式注入',()=>{
+test('印領清冊採 A4 直式單頁，保留合計、逐日節數、擴列及防公式注入',()=>{
  const data=payrollDetails(snapshot);
  assert.equal(data.teachers[0].note,'11/12(2.5)');
  assert.match(data.title,/115\/11\/1 至 115\/11\/30/);
  const files=unzipSync(buildPayrollWorkbook(snapshot,true));
  const sheet=strFromU8(files['xl/worksheets/sheet1.xml']);
- assert.match(sheet,/<c r="D5" s="\d+"><v>5800<\/v>/);
- assert.match(sheet,/<c r="B19" s="\d+" t="inlineStr">[^<]*<is><t [^>]+>=測試 &amp; 教師/);
- assert.match(sheet,/<c r="E27" s="\d+"><v>5800<\/v>/);
- assert.match(sheet,/<c r="C27" s="\d+"><v>13.5<\/v>/);
- assert.match(sheet,/<c r="B26" s="\d+" t="inlineStr">/);
- assert.match(sheet,/A27:B27/);
+ assert.doesNotMatch(sheet,/黏貼|憑證編號|預算科目|簽證號/);
+ assert.match(sheet,/<pageSetup paperSize="9" orientation="portrait" fitToWidth="1" fitToHeight="1"\/>/);
+ assert.match(sheet,/<c r="B4" s="\d+" t="inlineStr">[^<]*<is><t [^>]+>=測試 &amp; 教師/);
+ assert.match(sheet,/<c r="E12" s="\d+"><v>5800<\/v>/);
+ assert.match(sheet,/<c r="C12" s="\d+"><v>13.5<\/v>/);
+ assert.match(sheet,/<c r="B11" s="\d+" t="inlineStr">/);
+ assert.match(sheet,/A12:B12/);
  assert.match(sheet,/試用資料/);
- assert.match(strFromU8(files['xl/workbook.xml']),/\$A\$1:\$G\$28/);
+ assert.match(strFromU8(files['xl/workbook.xml']),/\$A\$1:\$G\$13/);
  assert.ok(Object.keys(files).every(name=>!name.startsWith('docProps/')&&!name.includes('printer')));
 });
