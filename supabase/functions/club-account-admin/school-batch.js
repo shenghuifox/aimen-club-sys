@@ -55,7 +55,7 @@ export async function issueSchoolBatch(rows,resolve,issue){
   catch(error){results.push({status:'failed',error:error.message});continue;}
   try{
    const result=await issue(row);
-   results.push(result.error?{status:'failed',error:result.error}:{status:'created',initial_password:result.initial_password});
+   results.push(result.error?{status:'failed',error:result.error}:{status:'created',initial_password:result.initial_password,...(result.teacher_code?{teacher_code:result.teacher_code}:{})});
   }catch{
    results.push({status:'unknown',error:'無法確認建帳結果，請先查看帳號管理。'});
   }

@@ -20,7 +20,7 @@ export async function getLoginSnapshot() {
 
 const GROUPED_RPC = {
   club_operations: ['cancel','makeup','swap','fee_status','void_settlement'],
-  club_manage: ['account_status','copy_term','link_guardian','unlink_guardian','guardian_leave','edit_club','create_club'],
+  club_manage: ['account_status','copy_term','edit_club','create_club'],
   club_followup: ['withdraw_leave','withdraw_change','edit_account'],
 };
 const rpcByAction = new Map(Object.entries(GROUPED_RPC).flatMap(([rpc,actions])=>actions.map(action=>[action,rpc])));
@@ -51,16 +51,18 @@ export async function schoolPasswordRequired(){
  return data;
 }
 
-export async function callAccountService(payload){
- const {data,error}=await supabase.functions.invoke('club-account-admin',{body:payload});
+async function invoke(name,payload){
+ const {data,error}=await supabase.functions.invoke(name,{body:payload});
  if(error){
   const detail=await error.context?.json?.().catch(()=>null);
   throw Error(detail?.error||'帳號服務無法使用，請聯絡學校。');
  }
  return data;
 }
+export const callAccountService=payload=>invoke('club-account-admin',payload);
 
-export async function login(username,password){
+export async function login(username,password,teacher_code){
+ if(teacher_code)return loginStudent({action:'teacher_setup',username:username.trim(),password,teacher_code});
  const account=username.trim();
  const legacy=account.includes('@')?account:`${account}@test.aimen.invalid`;
  const email=schoolEmail(account)||legacy;
@@ -84,11 +86,7 @@ export async function studentClasses(signal){
  return data;
 }
 export async function loginStudent(payload){
- const {data,error}=await supabase.functions.invoke('club-student-login',{body:payload});
- if(error){
-  const result=await error.context?.json?.().catch(()=>null);
-  throw Error(result?.error||'學生登入暫時無法使用。');
- }
+ const data=await invoke('club-student-login',payload);
  const {data:auth,error:verifyError}=await supabase.auth.verifyOtp({type:'magiclink',token_hash:data.token_hash});
  if(verifyError||!auth.user)throw Error('登入驗證已失效，請重新送出。');
  return auth;

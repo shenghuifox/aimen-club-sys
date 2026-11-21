@@ -14,7 +14,8 @@ import {submitSchoolImport} from './school-import.js';
 import EnrollmentManagement from './EnrollmentManagement.jsx';
 import RecurringModal from './RecurringModal.jsx';
 import PublicCalendar from './PublicCalendar.jsx';
-import Entry from './Entry.jsx';
+import Entry,{rememberStudentCode} from './Entry.jsx';
+import {cardPattern} from '../supabase/functions/club-account-admin/student-access.js';
 
 const NAV=[['home','入口首頁',LayoutDashboard],['calendar','本週課表',CalendarDays],['clubs','社團與報名',BookOpen],['roster','課表與名冊',Users],['attendance','授課與點名',ClipboardCheck],['leave','請假與覆核',FileCheck2],['changes','異動管理',ArrowLeftRight],['billing','行政核銷',Wallet],['students','學生管理',GraduationCap],['permissions','帳號管理',ShieldCheck],['settings','學期與設定',Settings]];
 const field=(name,label,type='text',options)=>({name,label,type,options});
@@ -63,7 +64,7 @@ function InstallHelp(){
 
 const LOGO=import.meta.env.BASE_URL+'logo.svg';
 const rawCard=new URLSearchParams(location.hash.slice(1)).get('student')||'';
-const studentCard=/^[0-9a-f]{48}$/.test(rawCard)?rawCard:null;
+const studentCard=cardPattern.test(rawCard)?rawCard:null;
 const authCallback=readAuthCallback(location);
 if(rawCard)history.replaceState(history.state,'',location.pathname+location.search);
 const siteUrl=new URL(import.meta.env.BASE_URL,location.origin).href;
@@ -78,7 +79,7 @@ function App(){
  const [card,setCard]=useState(studentCard);
  const [setup,setSetup]=useState(authCallback?'verify':'');
  const [setupProof,setSetupProof]=useState(authCallback?.proof||null);
- const [setupUser,setSetupUser]=useState(null);
+ const [setupUser,setSetupUser]=useState(null),[teacherCode,setTeacherCode]=useState('');
  const [setupMessage,setSetupMessage]=useState(authCallback?.invalid?'連結已失效，請貼上尚未使用的邀請連結或申請重設密碼。':'');
  const [recurring,setRecurring]=useState(false),[changeHistory,setChangeHistory]=useState(null);
  const [accountImport,setAccountImport]=useState(false),[issued,setIssued]=useState(null);
@@ -149,10 +150,15 @@ function App(){
  async function signIn(identity,values){
   setBusy(true);
   try{
-   const auth=identity==='teacher'?await login(values.username,values.password):
+   const code=(values.teacher_code||'').trim().toLowerCase();
+   const auth=identity==='teacher'?await login(values.username,values.password,code):
     await loginStudent({...values,last_character:values.last_character.trim()});
+   setTeacherCode(code);
    await enterSignedIn(auth.user.id,()=>true,identity);
-   if(identity==='student')setCard(null);
+   if(identity==='student'){
+    if(values.remember)rememberStudentCode(values.card);
+    setCard(null);
+   }
   }catch(error){notice(error.message,true);}
   finally{setBusy(false);}
  }
@@ -233,7 +239,7 @@ function App(){
    if(!setupUser||session?.user.id!==setupUser)throw Error('驗證工作階段已變更，請重新開啟或重設連結。');
    if(setup==='school-password'){
     if(isInitialPassword(password))throw Error('請選擇不同於校方提供的初始密碼。');
-    await callAccountService({action:'complete_setup',password});
+    await callAccountService({action:'complete_setup',password,teacher_code:teacherCode});
     await supabase.auth.signOut({scope:'local'});
     notice('密碼已更新，請用新密碼登入。');
    }else{
@@ -313,12 +319,11 @@ function App(){
   '撤回後仍會保留紀錄。請確認後送出。','確認撤回');
  function createSchoolAccount(){
   openForm('新增校用帳號',[field('username','登入帳號'),field('name','姓名'),
-   field('role','角色','select',staffRoles.map(([value,label])=>({value,label})))],
+   field('role','角色','select',staffRoles.filter(([role])=>role!=='admin').map(([value,label])=>({value,label})))],
    {},p=>{
-    if(p.role==='admin'&&!confirm('確定授予此帳號行政管理權？'))return;
     return action('account_credentials',{...p,action:'create_school'});
    },
-   '帳號限 2 至 40 字元，可使用英數字、底線及連字號，並以英數字開頭。初始密碼只顯示一次，請直接交付帳號持有人。','建立帳號');
+   '帳號限 2 至 40 字元，可使用英數字、底線及連字號，並以英數字開頭。初始密碼為帳號加 @Amps，啟用碼請個別交付。','建立帳號');
  }
  function accountProfile(u){
   const student=students.find(s=>s.user_id===u.id);
@@ -332,7 +337,18 @@ function App(){
    p=>action('edit_account',{id:u.id,term_id:term||null,username:p.username,name:p.name,roles:p.roles,notes:p.notes,student_number:p.student_number}),
    school?'校用登入帳號為 '+u.username+'。':'這裡的系統帳號名稱供行政辨識。');
  }
+ function inviteAdministrator(){
+  openForm('邀請行政管理員',[field('name','姓名'),field('email','可收信的 Email','email')],{},
+   p=>action('account_credentials',{...p,action:'invite',role:'admin'}),
+   '對方須完成 Email 驗證，才會取得行政權限。','寄送邀請');
+ }
  function credentials(u,kind){
+  if(kind==='admin_reset'||kind==='teacher_reset'){
+   const isAdmin=kind==='admin_reset';
+   openForm('重設 '+u.name+' 的密碼',[],{},()=>action('account_credentials',{action:kind,id:u.id}),
+    isAdmin?'重設信會寄到對方已驗證的 Email，由本人設定新密碼。':'舊密碼會失效，請將新的啟用碼交付本人。','確認重設');
+   return;
+  }
   const email=kind==='email';
   openForm((email?'修改登入電子郵件 ':'重設臨時密碼 ')+u.name,
    email?[field('email','新登入電子郵件','email'),field('confirmed','持有人已核對','select',[{value:'yes',label:'學校已核對新地址為同一人所有'}])]:
@@ -487,9 +503,9 @@ function App(){
   </tbody></table></div>
   {!students.length&&<Empty>目前學期尚無學生。請使用「批次匯入學生」。</Empty>}
  </section>}
- {page==='permissions'&&admin&&<><section className="panel"><div className="panel-head"><div><h2>帳號與權限</h2><p>校用帳號可直接登入，無須驗證電子郵件。</p></div><div className="form-actions"><button className="btn primary" disabled={busy||mode==='demo'} onClick={createSchoolAccount}><Plus size={16}/>新增校用帳號</button><button className="btn" disabled={busy} onClick={()=>setAccountImport('school')}><Plus size={16}/>批次匯入校用帳號</button></div></div><details className="note"><summary>既有電子郵件帳號</summary><button className="btn small" disabled={busy} onClick={()=>setAccountImport('legacy')}>匯入既有電子郵件帳號</button></details>{data.users.filter(u=>u.active!==false&&has(u,'admin')).length<2&&<p className="notice">目前尚未滿兩位管理者。正式啟用前請先完成第二位管理者指派；系統會阻擋移除必要管理者。</p>}<div className="table-wrap"><table><thead><tr><th>帳號</th><th>名稱</th><th>角色</th><th>帳號狀態</th><th>設定</th></tr></thead><tbody>{data.users.filter(u=>u.roles.some(role=>staffRoles.some(([staff])=>role===staff))&&!u.email?.endsWith('@test.aimen.invalid')).map(u=><tr key={u.id}><td>{u.username}{u.email&&<small>{isSchoolAccount(u.email)?'校用帳號':u.email}</small>}</td><td>{u.name}{students.find(s=>s.user_id===u.id)?.student_number&&<small>學號 {students.find(s=>s.user_id===u.id).student_number}</small>}{u.notes&&<small>{u.notes}</small>}</td><td>{u.roles.filter(r=>r!=='stu'&&r!=='guardian').map(r=><span className="pill" key={r}>{ROLE_NAMES[r]}</span>)}</td><td>{u.active===false?'已停權':'使用中'}</td><td><button className="btn small" disabled={busy} onClick={()=>accountProfile(u)}>編修資料與權限</button> {mode==='live'&&!has(u,'admin')&&<>{!isSchoolAccount(u.email)&&<button className="btn small" disabled={busy} onClick={()=>credentials(u,'email')}>修改登入電子郵件</button>} <button className="btn small" disabled={busy} onClick={()=>credentials(u,'password')}>重設密碼</button></>}{u.id!==user.id&&<button className="btn small" disabled={busy} onClick={()=>setAccountStatus(u)}>{u.active===false?'復權':'停權'}</button>}</td></tr>)}</tbody></table></div></section><PendingAccounts entries={(data.pending_accounts||[]).filter(x=>staffRoles.some(([staff])=>staff===x.role))} students={data.students} terms={data.terms} busy={busy} action={action}/></>}
+ {page==='permissions'&&admin&&<><section className="panel"><div className="panel-head"><div><h2>帳號與權限</h2><p>行政帳號需先完成 Email 驗證；老師首次登入須更改密碼。</p></div><div className="form-actions"><button className="btn primary" disabled={busy||mode==='demo'} onClick={createSchoolAccount}><Plus size={16}/>新增校用帳號</button>{mode==='live'&&<button className="btn" disabled={busy} onClick={inviteAdministrator}>邀請行政管理員</button>}<button className="btn" disabled={busy} onClick={()=>setAccountImport('school')}><Plus size={16}/>批次匯入校用帳號</button></div></div><details className="note"><summary>既有電子郵件帳號</summary><button className="btn small" disabled={busy} onClick={()=>setAccountImport('legacy')}>匯入既有電子郵件帳號</button></details>{data.users.filter(u=>u.active!==false&&has(u,'admin')&&u.email&&!u.email.endsWith('.invalid')).length<2&&<p className="notice">目前完成 Email 驗證的行政未滿兩位。請用「邀請行政管理員」邀請其他行政。</p>}<div className="table-wrap"><table><thead><tr><th>帳號</th><th>名稱</th><th>角色</th><th>帳號狀態</th><th>設定</th></tr></thead><tbody>{data.users.filter(u=>u.roles.some(role=>staffRoles.some(([staff])=>role===staff))&&!u.email?.endsWith('@test.aimen.invalid')).map(u=><tr key={u.id}><td>{u.username}{u.email&&<small>{isSchoolAccount(u.email)?'校用帳號':u.email}</small>}</td><td>{u.name}{students.find(s=>s.user_id===u.id)?.student_number&&<small>學號 {students.find(s=>s.user_id===u.id).student_number}</small>}{u.notes&&<small>{u.notes}</small>}</td><td>{u.roles.filter(r=>r!=='stu'&&r!=='guardian').map(r=><span className="pill" key={r}>{ROLE_NAMES[r]}</span>)}</td><td>{u.active===false?'已停權':has(u,'admin')&&(!u.email||u.email.endsWith('.invalid'))?'待完成 Email 驗證':'使用中'}</td><td><button className="btn small" disabled={busy} onClick={()=>accountProfile(u)}>編修資料與權限</button> {mode==='live'&&!has(u,'admin')&&<>{!isSchoolAccount(u.email)&&<button className="btn small" disabled={busy} onClick={()=>credentials(u,'email')}>修改登入電子郵件</button>} <button className="btn small" disabled={busy} onClick={()=>credentials(u,isSchoolAccount(u.email)?'teacher_reset':'password')}>重設密碼</button></>}{mode==='live'&&has(u,'admin')&&<button className="btn small" disabled={busy||!u.active||!u.email||u.email.endsWith('.invalid')} onClick={()=>credentials(u,'admin_reset')}>寄送密碼重設信</button>}{u.id!==user.id&&<button className="btn small" disabled={busy} onClick={()=>setAccountStatus(u)}>{u.active===false?'復權':'停權'}</button>}</td></tr>)}</tbody></table></div></section><PendingAccounts entries={(data.pending_accounts||[]).filter(x=>staffRoles.some(([staff])=>staff===x.role))} students={data.students} terms={data.terms} busy={busy} action={action}/></>}
  {page==='settings'&&admin&&<><section className="panel"><div className="panel-head"><h2>學期管理</h2><button className="btn primary" onClick={()=>openForm('建立新學期',[field('name','學期名稱，例如 115-2'),field('start_date','開始日期','date'),field('end_date','結束日期','date')],{},p=>action('add_term',p))}><Plus size={16}/>新增學期</button></div>{data.terms.map(t=><div className="setting-row" key={t.id}><div><strong>{t.name}</strong><small>{t.start_date} 至 {t.end_date}</small></div><Badge value={t.status==='active'?'進行中':'archived'}/><button className="btn small" disabled={busy} onClick={()=>copyTerm(t)}>複製此學期</button>{t.status==='active'&&<button className="btn small" onClick={()=>{if(confirm('封存後將停止該學期的業務修改，確定封存？'))action('archive_term',{id:t.id});}}>封存學期</button>}</div>)}</section><section className="panel"><h2>連線與版本</h2><div className="setting-row"><span>資料模式</span><strong>{mode==='demo'?'瀏覽器本機試用':'Supabase 雲端'}</strong></div><div className="setting-row"><span>版本</span><strong>0.5.0 試辦版</strong></div><p className="notice">尚未啟用 Email／推播及 Google 登入。正式核銷前請與會計及出納並行驗收。</p></section><section className="panel"><h2>最近操作</h2>{data.audit.slice(0,12).map(a=><div className="setting-row" key={a.id}><span>{a.actor||userName(a.created_by)} · {({leave:'提出請假',review_leave:'覆核請假',enroll:'申請報名',admit:'錄取調整',attendance:'確認點名',sign_in:'教師簽到',change:'提出異動',edit_change:'編修異動',review_change:'覆核異動',settle:'分期核銷',roles:'調整權限',save_club:'建立社團',add_session:'新增節次',publish_club:'切換報名',paper_done:'紙本簽章狀態',add_term:'新增學期',archive_term:'封存學期',add_student:'新增學生',withdraw_leave:'撤回假單',withdraw_change:'撤回異動',edit_account:'編修帳號',copy_term:'複製學期',account_status:'帳號停復權',link_guardian:'綁定家長',prepare_admin_account:'新增行政管理帳號',unlink_guardian:'解除家長綁定',guardian_leave:'家長請假',edit_club:'修改社團',import_accounts:'批次匯入帳號',claim_account:'啟用帳號',cancel_account:'取消待啟用帳號',batch_roster:'批次名單',fee_status:'登記繳費',void_settlement:'作廢核銷',...SCHEDULE_NAMES})[a.action]||'系統操作'}</span><small>{stamp(a.created_at)}{a.detail?.reason?' · '+a.detail.reason:''}</small></div>)}</section></>}
- </main><footer className="app-footer">隘門國小課後活動管理系統 <span>讓每一份用心，都有清楚的紀錄。</span></footer></div>{accountImport&&admin&&<AccountImport type={accountImport} term={activeTerm} busy={busy} demo={mode==='demo'} snapshot={data} close={()=>setAccountImport(false)} save={importAccounts}/>}{recurring&&<RecurringModal data={data} clubs={clubs} busy={busy} onClose={()=>setRecurring(false)} onSave={async p=>{const next=await action('batch_sessions',p);if(next)setRecurring(false);}}/>}{changeHistory&&<div className="overlay" onClick={()=>setChangeHistory(null)}><section className="modal" role="dialog" aria-modal="true" aria-label="異動編修紀錄" onClick={e=>e.stopPropagation()}><header><h2>異動編修紀錄</h2><button className="icon-btn" aria-label="關閉紀錄" onClick={()=>setChangeHistory(null)}><X/></button></header><p>目前原因：{changeHistory.reason}</p>{(changeHistory.edit_history||[]).map((h,i)=><div className="panel" key={i}><strong>{stamp(h.edited_at)} · {userName(h.edited_by)}</strong><p className="note">編修前：{h.before.reason}</p>{h.before.starts_at&&<p>原時間：{stamp(h.before.starts_at)} — {stamp(h.before.ends_at)}</p>}{h.before.effective_date&&<p>原生效日：{h.before.effective_date}</p>}<p>原授課教師：{userName(h.before.teacher_id)} · 原節數：{h.before.units??'—'} · 原費率：{h.before.rate??'—'}</p></div>)}</section></div>}{issued&&<div className="overlay"><section className="modal" role="dialog" aria-modal="true" aria-label="校用帳號已建立"><header><h2>{issued.student_link?'學生登入連結已發行':'校用帳號已建立'}</h2></header>{issued.student_link?<><p>請將登入連結個別交付給 {issued.name}。</p><button className="btn" onClick={()=>downloadCsv('學生登入連結',[['姓名','登入連結'],[issued.name,issued.student_link]])}>下載登入連結</button></>:<><p>登入帳號 <strong>{issued.username}</strong></p><p>初始密碼 <code>{issued.initial_password}</code></p><p className="note">初始密碼只顯示這一次，請直接交付帳號持有人。</p></>}<footer><button className="btn primary" onClick={()=>setIssued(null)}>完成</button></footer></section></div>}{modal&&<FormModal key={modal.title} spec={modal} close={()=>!busy&&setModal(null)} busy={busy}/>} {toast&&<div className={'toast '+(toast.error?'error':'')} role="alert">{toast.message}</div>}</div>;
+ </main><footer className="app-footer">隘門國小課後活動管理系統 <span>讓每一份用心，都有清楚的紀錄。</span></footer></div>{accountImport&&admin&&<AccountImport type={accountImport} term={activeTerm} busy={busy} demo={mode==='demo'} snapshot={data} close={()=>setAccountImport(false)} save={importAccounts}/>}{recurring&&<RecurringModal data={data} clubs={clubs} busy={busy} onClose={()=>setRecurring(false)} onSave={async p=>{const next=await action('batch_sessions',p);if(next)setRecurring(false);}}/>}{changeHistory&&<div className="overlay" onClick={()=>setChangeHistory(null)}><section className="modal" role="dialog" aria-modal="true" aria-label="異動編修紀錄" onClick={e=>e.stopPropagation()}><header><h2>異動編修紀錄</h2><button className="icon-btn" aria-label="關閉紀錄" onClick={()=>setChangeHistory(null)}><X/></button></header><p>目前原因：{changeHistory.reason}</p>{(changeHistory.edit_history||[]).map((h,i)=><div className="panel" key={i}><strong>{stamp(h.edited_at)} · {userName(h.edited_by)}</strong><p className="note">編修前：{h.before.reason}</p>{h.before.starts_at&&<p>原時間：{stamp(h.before.starts_at)} — {stamp(h.before.ends_at)}</p>}{h.before.effective_date&&<p>原生效日：{h.before.effective_date}</p>}<p>原授課教師：{userName(h.before.teacher_id)} · 原節數：{h.before.units??'—'} · 原費率：{h.before.rate??'—'}</p></div>)}</section></div>}{issued&&<div className="overlay"><section className="modal" role="dialog" aria-modal="true" aria-label="校用帳號已建立"><header><h2>{issued.student_link?'學生登入連結已發行':'校用帳號已建立'}</h2></header>{issued.student_link?<><p>請將登入碼或連結個別交付給 {issued.name}。</p><p>登入碼 <code>{issued.student_link.split('#student=')[1]}</code></p><button className="btn" onClick={()=>downloadCsv('學生登入連結',[['姓名','登入碼','登入連結'],[issued.name,issued.student_link.split('#student=')[1],issued.student_link]])}>下載登入連結</button></>:<><p>登入帳號 <strong>{issued.username}</strong></p><p>初始密碼 <code>{issued.initial_password}</code></p>{issued.teacher_code&&<p>首次啟用碼 <code>{issued.teacher_code}</code></p>}<p className="note">請將登入資料個別交付給帳號持有人。</p></>}<footer><button className="btn primary" onClick={()=>setIssued(null)}>完成</button></footer></section></div>}{modal&&<FormModal key={modal.title} spec={modal} close={()=>!busy&&setModal(null)} busy={busy}/>} {toast&&<div className={'toast '+(toast.error?'error':'')} role="alert">{toast.message}</div>}</div>;
 }
 const embedCalendar=new URLSearchParams(location.search).get('embed')==='calendar';
 createRoot(document.getElementById('root')).render(embedCalendar?<main className="calendar-embed"><PublicCalendar/></main>:<App/>);
