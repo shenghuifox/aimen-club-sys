@@ -8,7 +8,7 @@ const headers={
  "Cache-Control":"no-store",
 };
 const reply=(value:unknown,status=200)=>Response.json(value,{status,headers});
-const invalid=()=>reply({error:"無法確認學生身分。請核對登入連結、班級、座號、OpenID 數字及姓名末字。"},401);
+const invalid=()=>reply({error:"無法確認學生身分。請核對班級、座號、OpenID 數字、姓名末字及登入碼。"},401);
 
 Deno.serve(async request=>{
  if(request.method==="OPTIONS")return new Response(null,{status:204,headers});
