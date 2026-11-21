@@ -71,6 +71,10 @@
 .attendance-table th:nth-child(n+2) {
  width:28%;
 }
+.attendance-table .attendance-class th {
+ color:#425b50;
+ font-weight:600;
+}
 .attendance-table td:first-child {
  overflow:hidden;
  text-overflow:ellipsis;
