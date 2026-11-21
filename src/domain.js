@@ -3,12 +3,16 @@ export const STATUS_NAMES={pending:'未確認',waitlisted:'候補',approved:'已
 export const FEE_NAMES={pending:'待繳',paid:'已繳',overdue:'逾期待處理'};
 export const SCHEDULE_NAMES={cancel:'停課',makeup:'補課',swap:'雙向調課',extra:'加課'};
 export const has=(user,role)=>user?.roles?.includes(role);
-export const dateKey=(d=new Date())=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
+const taipeiDate=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'});
+export const dateKey=(d=new Date())=>taipeiDate.format(d);
 export function addDays(date,n){const d=new Date(date+'T12:00:00+08:00');d.setUTCDate(d.getUTCDate()+n);return dateKey(d);}
 export function weekDays(date){const d=new Date(date+'T12:00:00+08:00');const day=(d.getUTCDay()+6)%7;return Array.from({length:7},(_,i)=>addDays(date,i-day));}
-export const timeText=iso=>iso?new Intl.DateTimeFormat('zh-TW',{timeZone:'Asia/Taipei',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso)):'';
-export const stamp=iso=>iso?new Intl.DateTimeFormat('zh-TW',{timeZone:'Asia/Taipei',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso)):'—';
-export const money=n=>new Intl.NumberFormat('zh-TW',{style:'currency',currency:'TWD',maximumFractionDigits:0}).format(n||0);
+const taipeiTime=new Intl.DateTimeFormat('zh-TW',{timeZone:'Asia/Taipei',hour:'2-digit',minute:'2-digit',hour12:false});
+export const timeText=iso=>iso?taipeiTime.format(new Date(iso)):'';
+const taipeiStamp=new Intl.DateTimeFormat('zh-TW',{timeZone:'Asia/Taipei',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
+export const stamp=iso=>iso?taipeiStamp.format(new Date(iso)):'—';
+const currency=new Intl.NumberFormat('zh-TW',{style:'currency',currency:'TWD',maximumFractionDigits:0});
+export const money=n=>currency.format(n||0);
 export const intersects=(a,b)=>new Date(a.starts_at)<new Date(b.ends_at)&&new Date(a.ends_at)>new Date(b.starts_at);
 export function enrolledOn(enrollment,date){return enrollment.status==='enrolled'&&enrollment.start_date<=date&&(!enrollment.end_date||enrollment.end_date>=date);}
 export function rosterClubMemberships(enrollments,clubs,date){
