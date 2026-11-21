@@ -5,6 +5,7 @@ alter table club_private.users
   references auth.users(id),
  add constraint instructors_without_login_role check(login_enabled or roles=array['clubtr']::text[]);
 alter table club_private.users drop constraint users_id_fkey;
+create unique index users_auth_user_lookup on club_private.users(auth_user_id);
 
 create or replace function club_private.actor() returns club_private.users
 language plpgsql stable security definer set search_path='' as $$
@@ -72,7 +73,7 @@ begin
 end $$;
 
 create or replace function club_private.act(action text,payload jsonb) returns jsonb
-language plpgsql security definer set search_path='' as $
+language plpgsql security definer set search_path='' as $$
 declare actor club_private.users:=club_private.actor();
 begin
  if actor.roles=array['stu'] and (action is distinct from 'enroll' or not exists(
@@ -84,7 +85,7 @@ begin
   where s.id=(payload->>'session_id')::uuid and not u.login_enabled
  ) then raise exception '請由行政依紙本簽到紀錄補登'; end if;
  return club_private.act_legacy(action,payload);
-end $;
+end $$;
 
 alter table club_private.changes drop constraint changes_kind_check,
  add constraint changes_kind_check check(kind in ('add_student','remove_student','reschedule','weekly')
