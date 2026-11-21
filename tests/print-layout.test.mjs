@@ -6,6 +6,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {reportHtml} from '../src/reports.js';
+import {rosterClubMemberships} from '../src/domain.js';
 import {accountOrder,studentOrder} from '../src/roster-sort.js';
 
 const rows=Array.from({length:30},()=>({
@@ -33,6 +34,9 @@ test('報表保留簽章、簽到欄位與單頁 A4 版面',()=>{
 
 const roster={group:'足球社',teacher:'王老師',term:'115-1',students:Array.from({length:68},(_,i)=>
  ({class_name:'三年甲班',number:i+1,name:i===67?'末位同學':'學生 '+i}))};
+const classRoster={...roster,group:'三年甲班',showClubs:true,students:roster.students.slice(0,20).map((student,i)=>({
+ ...student,clubNames:i===19?['直排輪','桌球']:[],
+}))};
 const calendar={week:'2026-11-16',rows:[
  {club_name:'足球社',location:'球場',starts_at:'2026-11-16T15:00:00+08:00',ends_at:'2026-11-16T16:00:00+08:00'},
  {club_name:'書法社',location:'圖書館',starts_at:'2026-11-22T09:00:00+08:00',ends_at:'2026-11-22T10:00:00+08:00',cancelled:true},
@@ -61,12 +65,29 @@ test('名冊依中文年級、數字座號或帳號英數自然順序排序',()=
  assert.deepEqual([...list].sort(studentOrder('account',s=>s.username)).map(s=>s.username),expected);
  assert.deepEqual([...list].sort(accountOrder).map(s=>s.username),expected);
 });
+test('班級名冊列出有效社團，個別社團名冊不列出其他社團',()=>{
+ const clubs=[{id:'roller',name:'直排輪'},{id:'table',name:'桌球'},{id:'music',name:'烏克麗麗'}];
+ const enrollment={student_id:'pupil',club_id:'roller',status:'enrolled',start_date:'2026-08-01'};
+ const joined=rosterClubMemberships([
+  enrollment,enrollment,{...enrollment,club_id:'table'},
+  {...enrollment,club_id:'music',end_date:'2026-11-19'},
+  {...enrollment,club_id:'music',start_date:'2026-12-01'},
+  {...enrollment,club_id:'hidden'},{...enrollment,club_id:'music',status:'pending'},
+ ],clubs,'2026-11-20').get('pupil');
+ assert.deepEqual(joined.map(club=>club.name),['直排輪','桌球']);
+ const page=reportHtml(classRoster,'roster');
+ assert.match(page,/<th>參加社團<\/th>/);
+ assert.match(page,/<td>直排輪、桌球<\/td>/);
+ assert.match(page,/<td>—<\/td>/);
+ assert.doesNotMatch(reportHtml(roster,'roster'),/<th>參加社團<\/th>/);
+});
+
 test('Chrome 實際列印 PDF，以 A4 輸出單頁完整報表',{skip:!process.env.AIMEN_TEST_CHROME},()=>{
  const root=mkdtempSync(join(tmpdir(),'aimen-report-'));
  try {
-  for(const [kind,data] of [['payroll',snapshot],['sign',snapshot],['roster',roster],['calendar',calendar]]){
+  for(const [kind,data] of [['payroll',snapshot],['sign',snapshot],['roster',roster],['class',classRoster],['calendar',calendar]]){
    const html=join(root,kind+'.html'), pdf=join(root,kind+'.pdf');
-   writeFileSync(html,reportHtml(data,kind));
+   writeFileSync(html,reportHtml(data,kind==='class'?'roster':kind));
    const print=profile=>execFileSync(process.env.AIMEN_TEST_CHROME,['--headless','--no-sandbox','--disable-dev-shm-usage',
     '--no-first-run','--no-default-browser-check','--disable-background-networking','--no-pdf-header-footer',
     '--user-data-dir='+join(root,profile),'--print-to-pdf='+pdf,pathToFileURL(html).href],{timeout:35000,stdio:'pipe'});
@@ -86,6 +107,7 @@ test('Chrome 實際列印 PDF，以 A4 輸出單頁完整報表',{skip:!process.
     assert.equal(text.status,0);
     assert.match(text.stdout,/版本\s*2/);
     if(kind==='roster')assert.match(text.stdout,/末位同學/);
+    if(kind==='class')assert.match(text.stdout,/直排輪、桌球/);
     if(kind==='calendar')assert.match(text.stdout,/書法社/);
    }
   }

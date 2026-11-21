@@ -11,6 +11,18 @@ export const stamp=iso=>iso?new Intl.DateTimeFormat('zh-TW',{timeZone:'Asia/Taip
 export const money=n=>new Intl.NumberFormat('zh-TW',{style:'currency',currency:'TWD',maximumFractionDigits:0}).format(n||0);
 export const intersects=(a,b)=>new Date(a.starts_at)<new Date(b.ends_at)&&new Date(a.ends_at)>new Date(b.starts_at);
 export function enrolledOn(enrollment,date){return enrollment.status==='enrolled'&&enrollment.start_date<=date&&(!enrollment.end_date||enrollment.end_date>=date);}
+export function rosterClubMemberships(enrollments,clubs,date){
+ const byClub=new Map(clubs.map(club=>[club.id,club]));
+ const byStudent=new Map();
+ for(const enrollment of enrollments){
+  const club=byClub.get(enrollment.club_id);
+  if(!club||!enrolledOn(enrollment,date))continue;
+  let memberships=byStudent.get(enrollment.student_id);
+  if(!memberships){memberships=new Map();byStudent.set(enrollment.student_id,memberships);}
+  memberships.set(club.id,club);
+ }
+ return new Map([...byStudent].map(([id,memberships])=>[id,[...memberships.values()]]));
+}
 export function inRange(session,start,end){const d=dateKey(new Date(session.starts_at));return d>=start&&d<=end;}
 export function settlementPreview(data,clubId,start,end){
  if(!start||!end||start>end)throw Error('請確認核算起訖日期。');

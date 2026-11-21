@@ -43,14 +43,15 @@ function signHtml(s){
  <p class="handler-seal">承辦人</p>`;
 }
 
-function rosterHtml({group,teacher,term,students}){
- const columns=Math.min(4,Math.max(1,Math.ceil(students.length/25)));
+function rosterHtml({group,teacher,term,students,showClubs=false}){
+ const columns=Math.min(showClubs?2:4,Math.max(1,Math.ceil(students.length/(showClubs?28:25))));
+ const labels=['班級','座號','姓名',...(showClubs?['參加社團']:[])];
  const size=Math.max(1,Math.ceil(students.length/columns));
  return `<h1>隘門國民小學　${e(group)}名冊</h1>
  <p>${e(term)}　｜　教師 ${e(teacher||'未登錄')}　｜　共 ${students.length} 人</p>
- <div class="roster-columns" style="--columns:${columns}">${Array.from({length:columns},(_,i)=>
-  `<table>${headings(['班級','座號','姓名'])}<tbody>${students.slice(i*size,(i+1)*size).map(student=>
-   `<tr><td>${e(student.class_name)}</td><td>${e(student.number)}</td><td>${e(student.name)}</td></tr>`).join('')}</tbody></table>`).join('')}</div>`;
+ <div class="roster-columns${showClubs?' with-clubs':''}" style="--columns:${columns}">${Array.from({length:columns},(_,i)=>
+  `<table>${headings(labels)}<tbody>${students.slice(i*size,(i+1)*size).map(student=>
+   `<tr><td>${e(student.class_name)}</td><td>${e(student.number)}</td><td>${e(student.name)}</td>${showClubs?`<td>${e(student.clubNames?.join('、')||'—')}</td>`:''}</tr>`).join('')}</tbody></table>`).join('')}</div>`;
 }
 
 function calendarHtml({week,rows,title}){
@@ -90,6 +91,8 @@ export function reportHtml(snapshot,kind,id='預覽',demo=false){
  footer{font-size:9px;overflow-wrap:anywhere}
  .roster-columns{display:grid;grid-template-columns:repeat(var(--columns),minmax(0,1fr));gap:8px;align-items:start}
  .roster-columns th:nth-child(2){width:24%}.roster-columns td{font-size:11px}
+ .with-clubs th:nth-child(1),.with-clubs th:nth-child(3){width:19%}
+ .with-clubs th:nth-child(2){width:11%}
  .calendar-print td{vertical-align:top}.print-event{padding:5px 1px;line-height:1.4}.print-event+.print-event{border-top:1px solid #aaa}
  .cancelled strong{color:#9e1d1d}
  @page{size:A4 ${orientation};margin:10mm}
