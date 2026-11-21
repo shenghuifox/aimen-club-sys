@@ -27,6 +27,12 @@ jobs:
           VITE_SUPABASE_URL: https://eddaalutgxmanorbfrbm.supabase.co
           VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_83BTTzITDKTsaKPMboRIrg_AtG3J21V
           VITE_GOOGLE_AUTH_ENABLED: 'false'
+      - run: npm install --prefix "$RUNNER_TEMP/aimen-ui" --no-audit --no-fund playwright-core@1.58.2
+      - name: Verify all four roles in the built candidate
+        run: |
+          node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port 4173 &
+          for attempt in {1..20}; do curl -fsS http://127.0.0.1:4173/ >/dev/null && break; sleep 1; done
+          AIMEN_PLAYWRIGHT="$RUNNER_TEMP/aimen-ui/node_modules/playwright-core/index.mjs" AIMEN_TEST_CHROME="$(command -v google-chrome)" node scripts/smoke-ui.mjs http://127.0.0.1:4173/
       - if: github.ref == 'refs/heads/main'
         uses: actions/configure-pages@v5
       - if: github.ref == 'refs/heads/main'
@@ -46,3 +52,15 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+  verify-live:
+    if: github.ref == 'refs/heads/main'
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: npm install --prefix "$RUNNER_TEMP/aimen-ui" --no-audit --no-fund playwright-core@1.58.2
+      - name: Verify all four roles on the live site
+        run: AIMEN_PLAYWRIGHT="$RUNNER_TEMP/aimen-ui/node_modules/playwright-core/index.mjs" AIMEN_TEST_CHROME="$(command -v google-chrome)" node scripts/smoke-ui.mjs "https://shenghuifox.github.io/aimen-club-sys/?release=${{ github.sha }}"
