@@ -86,3 +86,12 @@ revoke all on function club_private.admin_reset_email(uuid),public.club_admin_re
 grant execute on function club_private.admin_reset_email(uuid),public.club_admin_reset_email(uuid) to authenticated;
 grant execute on function club_private.teacher_activation_email(text,text),public.club_teacher_activation_email(text,text),
  club_private.require_teacher_password(uuid),public.club_require_teacher_password(uuid) to service_role;
+
+create or replace function club_private.school_password_required() returns boolean
+language sql stable security definer set search_path='' as $$
+ select exists(select 1 from club_private.users u join auth.users a on a.id=u.id
+ where u.id=auth.uid() and u.active and u.school_login and u.must_change_password
+   and (not ('admin'=any(u.roles)) or club_private.verified_admin_email(u.id) is not null)
+   and a.deleted_at is null and (a.banned_until is null or a.banned_until<=now()))
+$$;
+
