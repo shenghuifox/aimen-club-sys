@@ -36,9 +36,13 @@ test('Chrome 實際列印 PDF，以 A4 輸出單頁完整報表',{skip:!process.
   for(const kind of ['payroll','sign']){
    const html=join(root,kind+'.html'), pdf=join(root,kind+'.pdf');
    writeFileSync(html,reportHtml(snapshot,kind));
-   execFileSync(process.env.AIMEN_TEST_CHROME,['--headless','--no-sandbox','--disable-dev-shm-usage',
-    '--no-pdf-header-footer','--user-data-dir='+join(root,'chrome'),'--print-to-pdf='+pdf,pathToFileURL(html).href],
-    {timeout:35000,stdio:'pipe'});
+   const print=profile=>execFileSync(process.env.AIMEN_TEST_CHROME,['--headless','--no-sandbox','--disable-dev-shm-usage',
+    '--no-first-run','--no-default-browser-check','--disable-background-networking','--no-pdf-header-footer',
+    '--user-data-dir='+join(root,profile),'--print-to-pdf='+pdf,pathToFileURL(html).href],{timeout:35000,stdio:'pipe'});
+   try{print(kind+'-chrome');}catch(error){
+    if(error.code!=='ETIMEDOUT')throw error;
+    print(kind+'-retry');
+   }
    const decoded=readFileSync(pdf,'latin1');
    assert.equal([...decoded.matchAll(/\/Type\s*\/Page\b/g)].length,1,kind);
    const match=decoded.match(/\/MediaBox\s*\[0 0 ([\d.]+) ([\d.]+)\]/);
