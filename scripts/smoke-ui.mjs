@@ -98,11 +98,11 @@ try{
    await visit(page,'異動管理');
    await page.getByRole('button',is('安排加課')).click();
    const schedule=page.getByRole('dialog',is('安排加課'));
-   await schedule.getByLabel('授課老師').selectOption('external');
+   await schedule.getByRole('combobox',{name:/授課老師/}).selectOption('external');
    await schedule.getByLabel('外聘老師姓名').waitFor();
    await closeForm(page);
    await visit(page,'課表與名冊');
-   await page.getByLabel('班級／社團篩選',{exact:true}).selectOption('class:三年甲班');
+   await page.getByRole('combobox',{name:/班級／社團篩選/}).selectOption('class:三年甲班');
    assert.equal(await page.getByText('測試學生三',{exact:true}).count(),0);
    const popupPromise=page.waitForEvent('popup');
    await page.getByRole('button',is('列印名冊')).click();
