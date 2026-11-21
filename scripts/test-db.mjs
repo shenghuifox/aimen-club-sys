@@ -551,7 +551,8 @@ await check('老師首次啟用碼只在伺服端比對，完成改密碼後失�
  assert.equal(await lookup(hash),null);
 });
 await db.exec('reset role');
-await db.exec(await fs.readFile(new URL('../supabase/schemas/014_lesson_scheduling.sql',import.meta.url),'utf8'));
+await db.exec(await fs.readFile(new URL('../supabase/schemas/014_schedule_lessons.sql',import.meta.url),'utf8'));
+await db.exec(await fs.readFile(new URL('../supabase/schemas/015_external_instructors.sql',import.meta.url),'utf8'));
 await check('行政加補課、外聘紙本補登、核銷及原師資開通帳號',async()=>{
  const rpc=(name,payload)=>db.query('select public.club_'+name+'($1) as result',[JSON.stringify(payload)]);
  await as('newManager');

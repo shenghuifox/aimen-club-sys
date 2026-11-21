@@ -87,11 +87,7 @@ begin
  return club_private.act_legacy(action,payload);
 end $$;
 
-alter table club_private.changes drop constraint changes_kind_check,
- add constraint changes_kind_check check(kind in ('add_student','remove_student','reschedule','weekly')
-  or (kind in ('cancel','makeup','swap','extra') and status='approved'));
-
-create function club_private.schedule_lesson(payload jsonb) returns jsonb
+create or replace function club_private.schedule_lesson(payload jsonb) returns jsonb
 language plpgsql security definer set search_path='' as $$
 declare
  writer club_private.users:=club_private.admin_writer();
@@ -181,7 +177,7 @@ begin
   values('activate_external_instructor',writer.id,jsonb_build_object('teacher_id',target));
 end $$;
 
-create function public.club_schedule_lesson(payload jsonb) returns jsonb
+create or replace function public.club_schedule_lesson(payload jsonb) returns jsonb
 language sql security invoker set search_path='' as $$ select club_private.schedule_lesson(payload) $$;
 create function public.club_paper_sign_in(payload jsonb) returns jsonb
 language sql security invoker set search_path='' as $$ select club_private.paper_sign_in(payload) $$;
