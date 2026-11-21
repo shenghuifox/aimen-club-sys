@@ -550,4 +550,29 @@ await check('老師首次啟用碼只在伺服端比對，完成改密碼後失�
  await db.query('select public.club_complete_school_password($1)',[id]);
  assert.equal(await lookup(hash),null);
 });
+await db.exec('reset role');
+await db.exec(await fs.readFile(new URL('../supabase/schemas/014_schedule_lessons.sql',import.meta.url),'utf8'));
+await check('行政安排加課與補課，可指定教師和節數並避免重複補排',async()=>{
+ const rpc=payload=>db.query('select public.club_schedule_lesson($1) as result',[JSON.stringify(payload)]);
+ await as('newManager');
+ const live=(await snapshot()).terms.find(t=>t.name==='115-1');
+ await act('save_club',{term_id:live.id,name:'加補課整合測試',plan_name:'測試計畫',kind:'社團',teacher_id:ids.newManager,
+  location:'測試教室',capacity:12,rate:450,registration_start:live.start_date,registration_end:live.end_date});
+ const club=(await snapshot()).clubs.find(c=>c.name==='加補課整合測試');
+ const data={club_id:club.id,teacher_id:ids.newManager,starts_at:'2026-08-04T10:00:00+08:00',ends_at:'2026-08-04T11:00:00+08:00',units:1.5,reason:'加課驗證'};
+ await as('anon');await assert.rejects(()=>rpc(data),/permission denied/);
+ await as('newManager');
+ const extra=(await rpc(data)).rows[0].result.id;
+ let view=await snapshot();
+ assert.equal(Number(view.sessions.find(s=>s.id===extra).rate),450);
+ assert.ok(view.changes.some(c=>c.kind==='extra'&&c.session_id===extra&&c.reason==='加課驗證'));
+ await assert.rejects(()=>rpc(data),/上課時間衝突/);
+ await db.query("select public.club_operations('cancel',$1)",[JSON.stringify({session_id:extra,reason:'停課'})]);
+ const makeup={...data,session_id:extra,starts_at:'2026-08-05T10:00:00+08:00',ends_at:'2026-08-05T10:40:00+08:00',units:1,reason:'補課驗證'};
+ const made=(await rpc(makeup)).rows[0].result.id;
+ await assert.rejects(()=>rpc({...makeup,starts_at:'2026-08-06T10:00:00+08:00'}),/已排定補課/);
+ view=await snapshot();
+ assert.equal(view.sessions.find(s=>s.id===made).teacher_id,ids.newManager);
+ assert.ok(view.changes.some(c=>c.kind==='makeup'&&c.session_id===extra&&Number(c.units)===1));
+});
 await db.close();console.log(`${count} database security scenarios passed`);

@@ -10,7 +10,7 @@ const key='aimen-demo-v2';
 export function loadDemo(){try{const saved=JSON.parse(localStorage.getItem(key));return saved?.users&&saved?.terms?saved:seed();}catch{return seed();}}
 export function resetDemo(){localStorage.removeItem(key);return seed();}
 export async function getSnapshot(){const {data,error}=await supabase.rpc('club_snapshot');if(error)throw error;return data;}
-const RPC_ACTIONS=new Set(['batch_sessions','update_student','edit_change','import_accounts','cancel_account','batch_roster']);
+const RPC_ACTIONS=new Set(['batch_sessions','update_student','edit_change','import_accounts','cancel_account','batch_roster','schedule_lesson']);
 
 export async function getLoginSnapshot() {
  const {error}=await supabase.rpc('club_claim_account');

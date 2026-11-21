@@ -231,6 +231,35 @@ export function demoAction(data,user,action,p){
   d.voided_settlements??=[];
   d.voided_settlements.unshift({...bill,voided_at:now,voided_by:user.id,void_reason:p.reason.trim()});
   d.settlements=d.settlements.filter(b=>b.id!==bill.id);
+ }else if(action==='schedule_lesson'){
+  requireAdmin();
+  if(!club)fail('請選擇社團。');
+  termOpen(club.id);
+  const reason=String(p.reason||'').trim();
+  const day=dateKey(new Date(p.starts_at));
+  const term=d.terms.find(t=>t.id===club.term_id);
+  if(!reason||reason.length>300||!(new Date(p.ends_at)>new Date(p.starts_at))||Number(p.units)<=0)fail('請檢查時間、節數和原因。');
+  if(day<term.start_date||dateKey(new Date(p.ends_at))>term.end_date)fail('上課日期超出學期。');
+  if(p.session_id){
+   if(!session||session.club_id!==club.id||session.status!=='cancelled'||session.signed_at)fail('請選擇此社團已停課的原節次。');
+   unlocked(club.id,dateKey(new Date(session.starts_at)));
+   if(d.changes.some(c=>c.kind==='makeup'&&c.session_id===session.id))fail('此節次已排定補課。');
+  }
+  unlocked(club.id,day);
+  const teacher=d.users.find(u=>u.id===p.teacher_id&&u.active!==false&&u.roles.some(r=>['clubtr','hrtr','admin'].includes(r)));
+  if(!teacher)fail('授課教師無效。');
+  const next={id:id(),club_id:club.id,teacher_id:teacher.id,starts_at:p.starts_at,ends_at:p.ends_at,
+   units:Number(p.units),rate:session?.rate??club.rate,status:'scheduled',summary:'',signed_at:null};
+  const roster=cid=>d.enrollments.filter(e=>e.club_id===cid&&enrolledOn(e,day)).map(e=>e.student_id);
+  const pupils=new Set(roster(club.id));
+  if(d.sessions.some(s=>s.status!=='cancelled'&&intersects(s,next)&&
+   (s.club_id===club.id||s.teacher_id===teacher.id||roster(s.club_id).some(studentId=>pupils.has(studentId)))))fail('教師、社團或學生時間衝突。');
+  d.sessions.push(next);
+  const kind=session?'makeup':'extra';
+  d.changes.unshift({id:id(),club_id:club.id,session_id:session?.id||next.id,kind,reason,
+   starts_at:next.starts_at,ends_at:next.ends_at,teacher_id:teacher.id,units:next.units,rate:next.rate,
+   original_dates:session?[session.starts_at]:[],status:'approved',created_by:user.id,reviewed_by:user.id,created_at:now});
+  d.audit.unshift({id:id(),action:kind,created_by:user.id,created_at:now,detail:{reason,session_id:next.id,teacher_id:teacher.id}});
  }else if(['cancel','makeup','swap'].includes(action)){
   requireAdmin();
   const day=s=>dateKey(new Date(s.starts_at));
