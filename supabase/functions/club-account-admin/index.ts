@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.95.3";
+import { familyRole, issueSchoolBatch, schoolBatchResolver, SCHOOL_BATCH_SIZE } from "./school-batch.js";
 import { initialSchoolPassword, isInitialPassword, isSchoolAccount, schoolEmail, validSchoolPassword } from "./school-auth.js";
 
 const origin = "https://shenghuifox.github.io";
@@ -26,7 +27,7 @@ Deno.serve(async (request) => {
 
   try {
     const body = await request.json();
-    if (!body || !["invite", "create_school", "complete_setup", "email", "password"].includes(body.action) ||
+    if (!body || !["invite", "create_school", "batch_create_school", "complete_setup", "email", "password"].includes(body.action) ||
         (["email", "password"].includes(body.action) && (typeof body.id !== "string" || !uuid.test(body.id)))) {
       return reply({ error: "請確認帳號操作" }, 400);
     }
@@ -50,7 +51,7 @@ Deno.serve(async (request) => {
       return reply({ message: "已更新密碼。" });
     }
 
-    const creating = body.action === "invite" || body.action === "create_school";
+    const creating = ["invite", "create_school", "batch_create_school"].includes(body.action);
     const { data: permission, error: permissionError } = await user.rpc("club_followup", {
       action: "auth_account", payload: { id: creating ? null : body.id },
     });
@@ -59,30 +60,56 @@ Deno.serve(async (request) => {
     if (creating ? permission?.authorized !== true : targetId !== body.id.toLowerCase()) {
       return reply({ error: "沒有操作此帳號的權限" }, 403);
     }
-    if (body.action === "create_school") {
+    if (body.action === "create_school" || body.action === "batch_create_school") {
+      const { data: identity, error: identityError } = await user.auth.getUser(authorization.slice(7));
+      if (identityError || !identity.user) return reply({ error: "請重新登入" }, 401);
+      const issuer = identity.user.id;
+      async function issue(row: { username: string; name: string; role: string; student_id?: string }) {
+        const alias = schoolEmail(row.username)!;
+        const password = initialSchoolPassword();
+        const { data: created, error } = await auth.createUser({
+          email: alias, password, email_confirm: true, app_metadata: { aimen_issued_by: issuer },
+        });
+        if (error || !created.user) {
+          if (!error?.status || error.status >= 500) throw Error("建立結果不明");
+          return { error: error.code === "email_exists" || error.code === "user_already_exists"
+            ? "此登入帳號已被使用。" : "無法建立校用帳號，請稍後重試。" };
+        }
+        const id = created.user.id;
+        const username = alias.split("@")[0];
+        const { error: registerError } = await user.rpc("club_register_school_account", {
+          payload: { id, username, name: row.name, role: row.role, student_id: familyRole(row.role) ? row.student_id : null },
+        });
+        if (registerError) {
+          const { error: cleanupError } = await auth.deleteUser(id);
+          if (cleanupError) throw Error("建立結果不明");
+          return { error: registerError.code === "P0001" ? registerError.message : "無法儲存帳號與權限，請稍後重試。" };
+        }
+        return { username, initial_password: password };
+      }
+
+      if (body.action === "batch_create_school") {
+        if (!Array.isArray(body.rows) || body.rows.length === 0 || body.rows.length > SCHOOL_BATCH_SIZE ||
+            typeof body.term_id !== "string" || !uuid.test(body.term_id)) {
+          return reply({ error: "請選擇學期並確認匯入筆數。" }, 400);
+        }
+        const { data: snapshot, error } = await user.rpc("club_snapshot");
+        if (error || !snapshot) return reply({ error: "無法確認名冊與帳號管理權限。" }, 403);
+        const termId = body.term_id.toLowerCase();
+        if (!snapshot.terms.some((term: { id: string; status: string }) => term.id === termId && term.status === "active")) {
+          return reply({ error: "請選擇使用中的學期。" }, 400);
+        }
+        return reply({ results: await issueSchoolBatch(body.rows, schoolBatchResolver(snapshot, termId), issue) });
+      }
+
       const alias = schoolEmail(body.username);
       const name = typeof body.name === "string" ? body.name.trim() : "";
       if (!alias || !name || name.length > 100 || !["stu", "guardian", "clubtr", "hrtr", "admin"].includes(body.role) ||
-          (["stu", "guardian"].includes(body.role) && !uuid.test(body.student_id || ""))) {
+          (familyRole(body.role) && (typeof body.student_id !== "string" || !uuid.test(body.student_id)))) {
         return reply({ error: "請核對帳號、姓名、角色及綁定的學生。" }, 400);
       }
-      const { data: identity, error: identityError } = await user.auth.getUser(authorization.slice(7));
-      if (identityError || !identity.user) return reply({ error: "請重新登入" }, 401);
-      const password = initialSchoolPassword();
-      const { data: created, error } = await auth.createUser({
-        email: alias, password, email_confirm: true, app_metadata: { aimen_issued_by: identity.user.id },
-      });
-      if (error || !created.user) return reply({ error: "無法建立校用帳號，請確認帳號是否已使用。" }, 400);
-      const id = created.user.id;
-      const username = alias.split("@")[0];
-      const { error: registerError } = await user.rpc("club_register_school_account", {
-        payload: { id, username, name, role: body.role, student_id: ["stu", "guardian"].includes(body.role) ? body.student_id : null },
-      });
-      if (registerError) {
-        await auth.deleteUser(id);
-        return reply({ error: registerError.code === "P0001" ? registerError.message : "無法儲存帳號與權限，請稍後重試。" }, 400);
-      }
-      return reply({ username, initial_password: password, message: "已建立校用帳號。" });
+      const result = await issue({ username: alias.split("@")[0], name, role: body.role, student_id: body.student_id });
+      return result.error ? reply({ error: result.error }, 400) : reply({ ...result, message: "已建立校用帳號。" });
     }
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     if (body.action !== "password" && (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {

@@ -1,13 +1,44 @@
 import React,{useState} from 'react';
 import {X,Download} from 'lucide-react';
-import {ACCOUNT_HEADERS,parseAccountImport} from './account-import.js';
+import {SCHOOL_HEADERS,ACCOUNT_HEADERS,parseAccountImport,parseSchoolImport} from './account-import.js';
+import {schoolBatchResolver} from '../supabase/functions/club-account-admin/school-batch.js';
 import {ROLE_NAMES} from './domain.js';
 import {downloadCsv} from './reports.js';
 
-export default function AccountImport({term,busy,close,save}) {
+const labels={created:'已建立',failed:'未建立',unknown:'待確認',skipped:'未送出'};
+const example=['parent-001','王家長','家長','三甲','01','王小明'];
+
+function ImportResults({results,close}) {
+ const created=results.filter(row=>row.status==='created');
+ const interrupted=results.some(row=>row.status==='unknown'||row.status==='skipped');
+ return <>
+  <p role="status">已建立 {created.length} 筆，其餘 {results.length-created.length} 筆請查看結果。</p>
+  {created.length>0&&<>
+   <p className="note">初始密碼只在此畫面提供。離開前請下載交付清單，並個別交付帳號持有人。</p>
+   <button type="button" className="btn" onClick={()=>downloadCsv('校用帳號初始密碼',[
+    ['帳號','姓名','角色','初始密碼'],
+    ...created.map(row=>[row.username,row.name,ROLE_NAMES[row.role],row.initial_password]),
+   ])}><Download size={16}/>下載初始密碼清單</button>
+  </>}
+  {interrupted&&<p className="note">待確認的帳號請先在帳號管理查詢。若帳號已建立，可從帳號管理重設其密碼。尚未建立的項目可重新匯入。</p>}
+  <div className="table-wrap"><table><thead><tr><th>帳號</th><th>姓名</th><th>結果</th><th>初始密碼</th></tr></thead>
+   <tbody>{results.map(row=><tr key={row.username}><td>{row.username}</td><td>{row.name}</td>
+    <td>{labels[row.status]}{row.error&&<small>{row.error}</small>}</td><td><code>{row.initial_password||'—'}</code></td></tr>)}</tbody>
+  </table></div>
+  <div className="form-actions"><button className="btn primary" onClick={close}>完成並關閉</button></div>
+ </>;
+}
+
+export default function AccountImport({type,term,busy,demo,snapshot,close,save}) {
+ const school=type==='school';
+ const title=school?'批次匯入校用帳號':'既有電子郵件帳號匯入';
+ const headers=school?SCHOOL_HEADERS:ACCOUNT_HEADERS;
  const [input,setInput]=useState('');
+ const [reading,setReading]=useState(false);
  const [preview,setPreview]=useState(null);
  const [error,setError]=useState('');
+ const [progress,setProgress]=useState(0);
+ const [results,setResults]=useState(null);
  function changeInput(value) {
   setInput(value);
   setPreview(null);
@@ -16,33 +47,57 @@ export default function AccountImport({term,busy,close,save}) {
  async function readFile(event) {
   const file=event.target.files[0];
   if (!file) return;
-  if (file.size>256000) { setError('檔案過大，請拆分後匯入。'); return; }
+  changeInput('');
+  if (file.size>256000) { setError('檔案過大，請拆分後匯入。');return; }
+  setReading(true);
   try { changeInput(await file.text()); }
   catch { setError('無法讀取檔案，請另存成 UTF-8 CSV 後重試。'); }
+  finally { setReading(false); }
  }
- return <div className="overlay" onClick={()=>!busy&&close()}>
-  <section className="modal admin-modal" role="dialog" aria-modal="true" aria-label="批次匯入帳號" onClick={e=>e.stopPropagation()}>
-   <header><h2>批次匯入與綁定帳號</h2><button className="icon-btn" aria-label="關閉" disabled={busy} onClick={close}><X/></button></header>
-   <p className="note">目前綁定學期為 {term?.name||'未選擇'}。學生的班級、座號及姓名須與名冊完全相同。既有已驗證的登入帳號會立即綁定。新電子郵件先列為待啟用，建立並驗證登入帳號後，第一次登入時完成綁定。</p>
-   <div className="toolbar">
-    <button type="button" className="btn" disabled={busy} onClick={()=>downloadCsv('帳號匯入範本',[ACCOUNT_HEADERS])}><Download size={16}/>下載 CSV 範本</button>
-    <label>上傳 UTF-8 CSV<input type="file" accept=".csv,text/csv" disabled={busy} onChange={readFile}/></label>
-   </div>
-   <label>或貼上含標題的 CSV／試算表資料
-    <textarea rows="6" value={input} disabled={busy} onChange={e=>changeInput(e.target.value)}/>
-   </label>
-   <p className="note">角色填「學生」、「社團老師」或「班級導師」。教師的班級與座號留空。請用文字格式保留座號前的 0。</p>
-   {error&&<p className="notice" role="alert">{error}</p>}
-   {preview&&<div className="table-wrap"><table><thead><tr>{ACCOUNT_HEADERS.map(header=><th key={header}>{header}</th>)}</tr></thead>
-    <tbody>{preview.map(row=><tr key={row.email}><td>{row.email}</td><td>{row.name}</td><td>{ROLE_NAMES[row.role]}</td><td>{row.class_name}</td><td>{row.number}</td></tr>)}</tbody>
-   </table></div>}
-   <div className="form-actions">
-    <button className="btn" disabled={busy||!input.trim()} onClick={()=>{
-     try { setPreview(parseAccountImport(input)); setError(''); }
-     catch (err) { setPreview(null); setError(err.message); }
-    }}>預覽資料</button>
-    <button className="btn primary" disabled={busy||!preview} onClick={()=>save(preview)}>確認匯入{preview?' '+preview.length+' 筆':''}</button>
-   </div>
+ function showPreview(){
+  try{
+   const rows=(school?parseSchoolImport:parseAccountImport)(input);
+   const validate=school?schoolBatchResolver(snapshot,term?.id):null;
+   const warnings=rows.map(row=>{
+    if(!validate)return '';
+    try{validate(row);return '';}
+    catch(err){return err.message;}
+   });
+   setPreview({rows,warnings});setError('');
+  }catch(err){setPreview(null);setError(err.message);}
+ }
+ async function submit(){
+  setError('');
+  try{
+   const reply=await save(preview.rows,setProgress);
+   if(school)setResults(reply);
+  }catch(err){setError(err.message);}
+ }
+ return <div className="overlay" onClick={()=>!busy&&!results&&close()}>
+  <section className="modal admin-modal" role="dialog" aria-modal="true" aria-label={title} onClick={e=>e.stopPropagation()}>
+   <header><h2>{title}</h2>{!results&&<button className="icon-btn" aria-label="關閉" disabled={busy} onClick={close}><X/></button>}</header>
+   {results?<ImportResults results={results} close={close}/>:<>
+    <p className="note">目前學期為 {term?.name||'未選擇'}。{school?'使用 CSV 或貼上試算表資料。新帳號無須電子郵件即可登入。':'已驗證的電子郵件帳號會立即綁定，其他帳號待完成驗證後啟用。'}</p>
+    <div className="toolbar">
+     <button type="button" className="btn" disabled={busy} onClick={()=>downloadCsv(school?'校用帳號匯入範本':'電子郵件帳號匯入範本',school?[headers,example]:[headers])}><Download size={16}/>下載 CSV 範本</button>
+     <label>上傳 UTF-8 CSV<input type="file" accept=".csv,text/csv" disabled={busy||reading} onChange={readFile}/></label>
+    </div>
+    <label>或貼上含標題的 CSV／試算表資料
+     <textarea rows="6" value={input} disabled={busy||reading} onChange={e=>changeInput(e.target.value)}/>
+    </label>
+    <p className="note">{school?'可匯入學生、家長、社團老師及班級導師。學生與家長請填班級、座號及學生姓名，學生帳號的學生姓名可沿用姓名欄。匯入前請刪除範本的示例列。':'角色填「學生」、「社團老師」或「班級導師」。學生的班級、座號及姓名須與名冊完全相同。'}教師請留空名冊欄位。座號如有前導 0，請在試算表以文字格式填寫。</p>
+    {school&&(demo||term?.status!=='active')&&<p className="note">{demo?'試用模式可預覽格式。正式建帳請用行政帳號登入。':'請切換至使用中的學期後再匯入。'}</p>}
+    {preview?.warnings.some(Boolean)&&<p className="note">請核對預覽中的提示。匯入時會再次比對名冊，符合條件的項目才會建立。</p>}
+    {error&&<p className="notice" role="alert">{error}</p>}
+    {preview&&<div className="table-wrap"><table><thead><tr>{headers.map(header=><th key={header}>{header}</th>)}{school&&<th>名冊檢查</th>}</tr></thead>
+     <tbody>{preview.rows.map((row,index)=><tr key={row.username||row.email}><td>{row.username||row.email}</td><td>{row.name}</td><td>{ROLE_NAMES[row.role]}</td><td>{row.class_name}</td><td>{row.number}</td>{school&&<><td>{row.student_name}</td><td>{preview.warnings[index]||'通過'}</td></>}</tr>)}</tbody>
+    </table></div>}
+    {busy&&school&&<p role="status">已收到 {progress}／{preview?.rows.length} 筆處理結果，請保持此頁開啟。</p>}
+    <div className="form-actions">
+     <button className="btn" disabled={busy||!input.trim()} onClick={showPreview}>預覽資料</button>
+     <button className="btn primary" disabled={busy||!preview||school&&(demo||term?.status!=='active')} onClick={submit}>確認匯入{preview?' '+preview.rows.length+' 筆':''}</button>
+    </div>
+   </>}
   </section>
  </div>;
 }
