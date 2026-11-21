@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2.95.3";
 import { familyRole, issueSchoolBatch, schoolBatchResolver, SCHOOL_BATCH_SIZE } from "./school-batch.js";
-import { randomHex, studentHashes, studentResolver } from "./student-access.js";
+import { randomHex, studentHashes, studentResolver, setupCode, digest, teacherDefault } from "./student-access.js";
 import { initialSchoolPassword, isInitialPassword, isSchoolAccount, schoolEmail, validSchoolPassword } from "./school-auth.js";
 
 const origin = "https://shenghuifox.github.io";
@@ -28,20 +28,34 @@ Deno.serve(async (request) => {
 
   try {
     const body = await request.json();
-    if (!body || !["invite", "create_school", "batch_create_school", "provision_students", "complete_setup", "email", "password"].includes(body.action) ||
-        (["email", "password"].includes(body.action) && (typeof body.id !== "string" || !uuid.test(body.id)))) {
+    if (!body || !["invite", "create_school", "batch_create_school", "provision_students", "complete_setup", "email", "password", "admin_reset", "teacher_reset"].includes(body.action) ||
+        (["email", "password", "admin_reset", "teacher_reset"].includes(body.action) && (typeof body.id !== "string" || !uuid.test(body.id)))) {
       return reply({ error: "請確認帳號操作" }, 400);
     }
     const service = createClient(url, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
     const auth = service.auth.admin;
+    if (body.action === "admin_reset") {
+      const {data:email,error}=await user.rpc("club_admin_reset_email",{account_id:body.id});
+      if(error||!email)return reply({error:error?.message||"此帳號無法收取重設信。"},403);
+      const sender=createClient(url,Deno.env.get("SUPABASE_ANON_KEY")!,{auth:{persistSession:false}});
+      const {error:sendError}=await sender.auth.resetPasswordForEmail(email,{redirectTo});
+      if(sendError)return reply({error:"無法寄出重設信，請確認郵件服務與配額。"},502);
+      return reply({message:"已向對方已驗證的 Email 寄出重設通知。"});
+    }
     if (body.action === "complete_setup") {
       if (!validSchoolPassword(body.password) || isInitialPassword(body.password)) {
         return reply({ error: "請設定一組新的密碼，至少 8 字元，包含英文字母及數字。" }, 400);
       }
       const { data: identity, error: identityError } = await user.auth.getUser(authorization.slice(7));
       if (identityError || !identity.user) return reply({ error: "請重新登入" }, 401);
+      const setupDigest=identity.user.app_metadata?.aimen_teacher_setup;
+      const username=identity.user.email?.split("@")[0]||"";
+      if (setupDigest && (typeof body.teacher_code!=="string" || await digest(body.teacher_code)!==setupDigest
+        || body.password===teacherDefault(username))) {
+        return reply({error:"請從老師入口使用初始密碼與啟用碼重新登入，並設定不同的新密碼。"},400);
+      }
       const { data: required, error: statusError } = await user.rpc("club_school_password_required");
       if (statusError || !required) return reply({ error: "此帳號無法進行首次密碼設定" }, 403);
       const id = identity.user.id;
@@ -69,8 +83,12 @@ Deno.serve(async (request) => {
         roster?: Record<string, unknown>) {
         const alias = schoolEmail(row.username)!;
         const password = initialSchoolPassword();
+        const teacherCode = roster ? "" : setupCode(16);
         const { data: created, error } = await auth.createUser({
-          email: alias, password, email_confirm: true, app_metadata: { aimen_issued_by: issuer },
+          email: alias, password, email_confirm: true, app_metadata: {
+            aimen_issued_by: issuer,
+            ...(teacherCode ? {aimen_teacher_setup:await digest(teacherCode)} : {}),
+          },
         });
         if (error || !created.user) {
           if (!error?.status || error.status >= 500) throw Error("建立結果不明");
@@ -87,7 +105,7 @@ Deno.serve(async (request) => {
           if (cleanupError) throw Error("建立結果不明");
           return { error: registerError.code === "P0001" ? registerError.message : "無法儲存帳號與權限，請稍後重試。" };
         }
-        return { username, initial_password: password };
+        return { username, ...(teacherCode ? {initial_password:teacherDefault(username),teacher_code:teacherCode} : {}) };
       }
 
       if (body.action === "batch_create_school" || body.action === "provision_students") {
@@ -119,7 +137,7 @@ Deno.serve(async (request) => {
             continue;
           }
           try {
-            const card = row.openid ? randomHex(24) : "";
+            const card = row.openid ? setupCode(12) : "";
             const {class_name,number,name} = row;
             const payload = {class_name,number,name,term_id:termId,replace,
               ...(card ? await studentHashes(card,row.openid) : {})};
@@ -140,15 +158,26 @@ Deno.serve(async (request) => {
 
       const alias = schoolEmail(body.username);
       const name = typeof body.name === "string" ? body.name.trim() : "";
-      if (!alias || !name || name.length > 100 || !["clubtr", "hrtr", "admin"].includes(body.role) ||
+      if (!alias || !name || name.length > 100 || !["clubtr", "hrtr"].includes(body.role) ||
           (familyRole(body.role) && (typeof body.student_id !== "string" || !uuid.test(body.student_id)))) {
         return reply({ error: "請核對帳號、姓名、角色及綁定的學生。" }, 400);
       }
       const result = await issue({ username: alias.split("@")[0], name, role: body.role, student_id: body.student_id });
       return result.error ? reply({ error: result.error }, 400) : reply({ ...result, message: "已建立校用帳號。" });
     }
+    if (body.action === "teacher_reset") {
+      const {data:target,error}=await auth.getUserById(targetId);
+      if(error||!isSchoolAccount(target.user?.email))return reply({error:"此帳號請透過既有電子郵件重設。"},400);
+      const username=target.user!.email!.split("@")[0],teacherCode=setupCode(16);
+      const {error:setupError}=await service.rpc("club_require_teacher_password",{account_id:targetId});
+      if(setupError)return reply({error:"此帳號無法發行老師啟用碼。"},400);
+      const {error:resetError}=await auth.updateUserById(targetId,{password:initialSchoolPassword(),
+       app_metadata:{aimen_teacher_setup:await digest(teacherCode)}});
+      if(resetError)return reply({error:"尚未完成重設，請重新發行啟用碼。"},502);
+      return reply({username,initial_password:teacherDefault(username),teacher_code:teacherCode,message:"已重設老師初始密碼。"});
+    }
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-    if (body.action !== "password" && (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
+    if (body.action !== "password" && (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.endsWith(".invalid"))) {
       return reply({ error: "請輸入有效電子郵件" }, 400);
     }
     if (body.action === "invite") {

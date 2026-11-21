@@ -26,15 +26,15 @@ function ImportResults({results,students,close}) {
   {issued.length>0&&<>
    <p className="note">請在關閉前下載，並個別交付給帳號持有人。</p>
    <button type="button" className="btn" onClick={()=>downloadCsv(credential,students?[
-    ['班級','座號','姓名',credential],...issued.map(row=>[row.class_name,row.number,row.name,row.student_link]),
-   ]:[['帳號','姓名','角色',credential],...issued.map(row=>[row.username,row.name,ROLE_NAMES[row.role],row.initial_password])])}>
+    ['班級','座號','姓名','學生登入碼',credential],...issued.map(row=>[row.class_name,row.number,row.name,row.student_link.split('#student=')[1],row.student_link]),
+   ]:[['帳號','姓名','角色',credential,'首次啟用碼'],...issued.map(row=>[row.username,row.name,ROLE_NAMES[row.role],row.initial_password,row.teacher_code])])}>
     <Download size={16}/>下載{credential}清單
    </button>
   </>}
   <div className="table-wrap"><table><thead><tr><th>{students?'班級／座號':'帳號'}</th><th>姓名</th><th>結果</th><th>{credential}</th></tr></thead>
    <tbody>{results.map((row,i)=><tr key={i}><td>{identifier(row,students)}</td><td>{row.name}</td>
     <td>{labels[row.status]}{row.error&&<small>{row.error}</small>}</td>
-    <td>{row.student_link?<a href={row.student_link} target="_blank" rel="noreferrer">個人登入連結</a>:<code>{row.initial_password||'—'}</code>}</td>
+    <td>{row.student_link?<a href={row.student_link} target="_blank" rel="noreferrer">個人登入連結</a>:<code>{row.initial_password||'—'}</code>}{row.teacher_code&&<small>啟用碼 {row.teacher_code}</small>}</td>
    </tr>)}</tbody>
   </table></div>
   <div className="form-actions"><button className="btn primary" onClick={close}>完成並關閉</button></div>

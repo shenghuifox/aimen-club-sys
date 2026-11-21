@@ -516,4 +516,38 @@ await check('隔離測試學期、關閉測試帳號，保留名冊關聯並建�
  const published=(await db.query("select * from public.club_public_calendar('2026-11-16')")).rows;
  assert.ok(!published.some(r=>r.club_name==='測試社團'));
 });
+await db.exec('reset role');
+await db.query('update club_private.users set active=true where id=$1',[ids.admin]);
+await db.exec(await fs.readFile(new URL('../supabase/schemas/013_account_verification.sql',import.meta.url),'utf8'));
+await check('行政須具已驗證真實 Email，僅行政可請求寄送同儕重設信',async()=>{
+ const peer='60000000-0000-0000-0000-000000000001';
+ const email='verified-peer@example.org';
+ await as('admin');await assert.rejects(snapshot,/Email 驗證/);
+ await db.exec('reset role');
+ await db.query('insert into auth.users(id,email) values($1,$2)',[peer,email]);
+ const promote=()=>db.query("insert into club_private.users(id,username,name,roles) values($1,$2,'行政測試',array['admin'])",[peer,email]);
+ await assert.rejects(promote,/已驗證/);
+ await db.query('update auth.users set email_confirmed_at=now() where id=$1',[peer]);
+ await promote();
+ const reset=id=>db.query('select public.club_admin_reset_email($1) email',[id]);
+ await as('anon');await assert.rejects(()=>reset(peer),/permission denied/);
+ await as('newManager');assert.equal((await reset(peer)).rows[0].email,email);
+ await assert.rejects(()=>reset(ids.admin),/尚未完成 Email 驗證/);
+});
+await check('老師首次啟用碼只在伺服端比對，完成改密碼後失效',async()=>{
+ const id='60000000-0000-0000-0000-000000000002',username='teacher10',email=username+'@accounts.aimen.invalid';
+ const hash='a'.repeat(64);
+ await db.exec('reset role');
+ await db.query('insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data) values($1,$2,now(),$3)',
+ [id,email,{aimen_issued_by:ids.newManager,aimen_teacher_setup:hash}]);
+ await as('newManager');
+ await db.query('select public.club_register_school_account($1)',[{id,username,name:'新教師',role:'hrtr'}]);
+ const lookup=async digest=>(await db.query('select public.club_teacher_activation_email($1,$2) email',[username,digest])).rows[0].email;
+ await assert.rejects(()=>lookup(hash),/permission denied/);
+ await db.exec('reset role; set role service_role');
+ assert.equal(await lookup('b'.repeat(64)),null);
+ assert.equal(await lookup(hash),email);
+ await db.query('select public.club_complete_school_password($1)',[id]);
+ assert.equal(await lookup(hash),null);
+});
 await db.close();console.log(`${count} database security scenarios passed`);

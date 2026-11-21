@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {parseStudentImport,parseStaffImport} from '../src/account-import.js';
-import {studentHashes,studentResolver,randomHex} from '../supabase/functions/club-account-admin/student-access.js';
+import {studentHashes,studentResolver,randomHex,setupCode,cardPattern,teacherCodePattern,teacherDefault} from '../supabase/functions/club-account-admin/student-access.js';
 
 test('學生匯入保留文字座號和 OpenID 前導零，也可先匯入三欄',()=>{
  assert.deepEqual(parseStudentImport('班級,座號,姓名,OpenID數字\n三甲,01,王同學,000123'),
@@ -27,4 +27,11 @@ test('登入連結為獨立亂數，雜湊核對連結和 OpenID 數字',async()
  assert.notEqual(base.openid_hash,(await studentHashes(b,'000123')).openid_hash);
  assert.notEqual(base.openid_hash,(await studentHashes(a,'123')).openid_hash);
  assert.equal(base.card_hash,(await studentHashes(a,'123')).card_hash);
+});
+
+test('學生登入碼與舊連結並存，老師初始密碼採帳號加 @Amps',()=>{
+ assert.ok(cardPattern.test(randomHex(24)));
+ assert.ok(cardPattern.test(setupCode(12)));
+ assert.ok(teacherCodePattern.test(setupCode(16)));
+ assert.equal(teacherDefault('teacher01'),'teacher01@Amps');
 });
