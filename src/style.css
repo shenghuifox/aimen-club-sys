@@ -93,3 +93,9 @@
  .attendance-table .badge {padding-inline:3px}
  .attendance-table select {padding-inline:4px}
 }
+
+.manual nav{display:flex;flex-wrap:wrap;gap:8px 14px}
+.manual nav a,.manual section>a{color:var(--green);text-decoration:underline;text-underline-offset:3px}
+.manual section[id]{scroll-margin-top:16px}
+.manual ol{padding-inline-start:1.4rem;line-height:1.75}
+.manual li+li{margin-top:.65rem}
