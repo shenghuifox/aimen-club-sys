@@ -22,7 +22,7 @@ export default function ScheduleLesson({clubs,teachers,source,busy,close,save}){
    club_id:clubId,session_id:source?.id,
    starts_at:date+'T'+start+':00+08:00',ends_at:date+'T'+end+':00+08:00',
    units:Number(form.get('units')),reason:form.get('reason').trim(),
-   teacher_id:teacherId,
+   teacher_id:teacherId==='external'?null:teacherId,external_name:form.get('external_name')?.trim(),
   });
  }
  return <div className="overlay" onClick={close}><section className="modal schedule-modal" role="dialog" aria-modal="true" aria-labelledby="schedule-title" onClick={event=>event.stopPropagation()}>
@@ -43,8 +43,10 @@ export default function ScheduleLesson({clubs,teachers,source,busy,close,save}){
    <label>節數<input required type="number" name="units" min="0.5" max="99.5" step="0.5" defaultValue={source?.units||2}/></label>
    <label>授課老師<select required value={teacherId} onChange={event=>setTeacherId(event.target.value)}>
     <option value="">請選擇授課老師</option>
-    {teachers.map(teacher=><option value={teacher.id} key={teacher.id}>{teacher.name}</option>)}
+    {teachers.map(teacher=><option value={teacher.id} key={teacher.id}>{teacher.name}{teacher.external?'（外聘，無帳號）':''}</option>)}
+    <option value="external">＋新增外聘老師</option>
    </select></label>
+   {teacherId==='external'&&<label>外聘老師姓名<input required name="external_name" maxLength={100} autoComplete="off"/></label>}
    <label>異動原因<textarea required name="reason" maxLength={300}/></label>
    <p className="note">{source?'沿用原節次':'採用社團設定'}的每節鐘點費。</p>
    <footer><button type="button" className="btn" onClick={close}>取消</button><button className="btn primary" disabled={busy||!club}>{busy?'處理中…':'確認排課'}</button></footer>

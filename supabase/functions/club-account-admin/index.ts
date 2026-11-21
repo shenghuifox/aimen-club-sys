@@ -80,13 +80,15 @@ Deno.serve(async (request) => {
       if (identityError || !identity.user) return reply({ error: "請重新登入" }, 401);
       const issuer = identity.user.id;
       async function issue(row: { username: string; name: string; role: string; student_id?: string },
-        roster?: Record<string, unknown>) {
+        roster?: Record<string, unknown>, externalId?: string) {
         const alias = schoolEmail(row.username)!;
         const password = initialSchoolPassword();
         const teacherCode = roster ? "" : setupCode(16);
         const { data: created, error } = await auth.createUser({
+          ...(externalId ? {id:externalId} : {}),
           email: alias, password, email_confirm: true, app_metadata: {
             aimen_issued_by: issuer,
+            ...(externalId ? {aimen_external_instructor:externalId} : {}),
             ...(teacherCode ? {aimen_teacher_setup:await digest(teacherCode)} : {}),
           },
         });
@@ -97,7 +99,9 @@ Deno.serve(async (request) => {
         }
         const id = created.user.id;
         const username = alias.split("@")[0];
-        const { error: registerError } = await user.rpc(roster ? "club_provision_student" : "club_register_school_account", {
+        const rpc = externalId ? "club_activate_external_instructor" :
+          roster ? "club_provision_student" : "club_register_school_account";
+        const { error: registerError } = await user.rpc(rpc, {
           payload: { id, username, name: row.name, role: row.role, student_id: familyRole(row.role) ? row.student_id : null, ...roster },
         });
         if (registerError) {
@@ -162,7 +166,19 @@ Deno.serve(async (request) => {
           (familyRole(body.role) && (typeof body.student_id !== "string" || !uuid.test(body.student_id)))) {
         return reply({ error: "請核對帳號、姓名、角色及綁定的學生。" }, 400);
       }
-      const result = await issue({ username: alias.split("@")[0], name, role: body.role, student_id: body.student_id });
+      let externalId: string | undefined;
+      if (body.external_id !== undefined) {
+        if (body.role !== "clubtr" || typeof body.external_id !== "string" || !uuid.test(body.external_id)) {
+          return reply({error:"請選擇有效的外聘老師。"},400);
+        }
+        externalId=body.external_id.toLowerCase();
+        const {data:snapshot,error}=await user.rpc("club_snapshot");
+        if(error || !snapshot?.external_instructors?.includes(externalId) ||
+          !snapshot.users.some((entry:{id:string;active:boolean})=>entry.id===externalId&&entry.active)) {
+          return reply({error:"此外聘老師已開通、已停用或不存在。"},400);
+        }
+      }
+      const result = await issue({ username: alias.split("@")[0], name, role: body.role, student_id: body.student_id },undefined,externalId);
       return result.error ? reply({ error: result.error }, 400) : reply({ ...result, message: "已建立校用帳號。" });
     }
     if (body.action === "teacher_reset") {

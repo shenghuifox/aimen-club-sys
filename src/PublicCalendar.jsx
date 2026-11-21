@@ -1,7 +1,8 @@
 import React,{useEffect,useState} from 'react';
-import {CalendarDays,ChevronLeft,ChevronRight} from 'lucide-react';
+import {CalendarDays,ChevronLeft,ChevronRight,Printer} from 'lucide-react';
 import {configured,getPublicCalendar} from './api.js';
 import {addDays,dateKey,timeText,weekDays} from './domain.js';
+import {printReport} from './reports.js';
 import './public-calendar.css';
 
 const dayName='一二三四五六日';
@@ -13,6 +14,7 @@ export default function PublicCalendar(){
  const [selected,setSelected]=useState(null);
  const [retry,setRetry]=useState(0);
  const [result,setResult]=useState(null);
+ const [printError,setPrintError]=useState('');
  const days=weekDays(week);
  useEffect(()=>{
   if(!configured)return;
@@ -43,7 +45,11 @@ export default function PublicCalendar(){
    <strong aria-live="polite">{shortDate(week)} – {shortDate(days[6])}</strong>
    <button className="icon-btn" type="button" aria-label="下一週" onClick={()=>changeWeek(addDays(week,7))}><ChevronRight size={20}/></button>
    <button className="btn small" type="button" onClick={()=>changeWeek(weekDays(today)[0])}>回本週</button>
+   <button className="btn small print-control" type="button" disabled={!current?.rows} onClick={()=>{
+    try{printReport({week,rows:current.rows},'calendar');setPrintError('');}catch(error){setPrintError(error.message);}
+   }}><Printer size={16}/>列印週課表</button>
   </div>
+  {printError&&<p role="alert">{printError}</p>}
   <div className="public-calendar-days" role="group" aria-label="依日期篩選課程">
    {days.map((day,index)=><button key={day} type="button" aria-pressed={selected===day}
     aria-current={day===today?'date':undefined} aria-label={shortDate(day)+' 星期'+dayName[index]}

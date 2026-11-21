@@ -552,27 +552,64 @@ await check('老師首次啟用碼只在伺服端比對，完成改密碼後失�
 });
 await db.exec('reset role');
 await db.exec(await fs.readFile(new URL('../supabase/schemas/014_schedule_lessons.sql',import.meta.url),'utf8'));
-await check('行政安排加課與補課，可指定教師和節數並避免重複補排',async()=>{
- const rpc=payload=>db.query('select public.club_schedule_lesson($1) as result',[JSON.stringify(payload)]);
+await db.exec(await fs.readFile(new URL('../supabase/schemas/015_external_instructors.sql',import.meta.url),'utf8'));
+await check('行政加補課、外聘紙本補登、核銷及原師資開通帳號',async()=>{
+ const rpc=(name,payload)=>db.query('select public.club_'+name+'($1) as result',[JSON.stringify(payload)]);
  await as('newManager');
  const live=(await snapshot()).terms.find(t=>t.name==='115-1');
- await act('save_club',{term_id:live.id,name:'加補課整合測試',plan_name:'測試計畫',kind:'社團',teacher_id:ids.newManager,
+ await act('save_club',{term_id:live.id,name:'外聘整合測試',plan_name:'測試計畫',kind:'社團',teacher_id:ids.newManager,
   location:'測試教室',capacity:12,rate:450,registration_start:live.start_date,registration_end:live.end_date});
- const club=(await snapshot()).clubs.find(c=>c.name==='加補課整合測試');
- const data={club_id:club.id,teacher_id:ids.newManager,starts_at:'2026-08-04T10:00:00+08:00',ends_at:'2026-08-04T11:00:00+08:00',units:1.5,reason:'加課驗證'};
- await as('anon');await assert.rejects(()=>rpc(data),/permission denied/);
+ const club=(await snapshot()).clubs.find(c=>c.name==='外聘整合測試');
+ const data={club_id:club.id,starts_at:'2026-08-04T10:00:00+08:00',ends_at:'2026-08-04T11:00:00+08:00',
+  units:1.5,external_name:'外聘紙本測試',reason:'加課驗證'};
+ await as('anon');await assert.rejects(()=>rpc('schedule_lesson',data),/permission denied/);
  await as('newManager');
- const extra=(await rpc(data)).rows[0].result.id;
+ const extra=(await rpc('schedule_lesson',data)).rows[0].result.id;
  let view=await snapshot();
+ const teacher=view.sessions.find(s=>s.id===extra).teacher_id;
+ assert.ok(view.external_instructors.includes(teacher));
+ assert.equal(view.users.find(u=>u.id===teacher).name,data.external_name);
  assert.equal(Number(view.sessions.find(s=>s.id===extra).rate),450);
- assert.ok(view.changes.some(c=>c.kind==='extra'&&c.session_id===extra&&c.reason==='加課驗證'));
- await assert.rejects(()=>rpc(data),/上課時間衝突/);
+ await assert.rejects(()=>rpc('schedule_lesson',{...data,external_name:'碰撞後不留建檔'}),/上課時間衝突/);
+ assert.ok(!(await snapshot()).users.some(u=>u.name==='碰撞後不留建檔'));
  await db.query("select public.club_operations('cancel',$1)",[JSON.stringify({session_id:extra,reason:'停課'})]);
- const makeup={...data,session_id:extra,starts_at:'2026-08-05T10:00:00+08:00',ends_at:'2026-08-05T10:40:00+08:00',units:1,reason:'補課驗證'};
- const made=(await rpc(makeup)).rows[0].result.id;
- await assert.rejects(()=>rpc({...makeup,starts_at:'2026-08-06T10:00:00+08:00'}),/已排定補課/);
+ const makeup={...data,teacher_id:teacher,external_name:null,session_id:extra,starts_at:'2026-08-05T10:00:00+08:00',ends_at:'2026-08-05T10:40:00+08:00',units:1,reason:'補課驗證'};
+ const made=(await rpc('schedule_lesson',makeup)).rows[0].result.id;
+ await assert.rejects(()=>rpc('schedule_lesson',{...makeup,starts_at:'2026-08-06T10:00:00+08:00',ends_at:'2026-08-06T10:40:00+08:00'}),/已排定補課/);
  view=await snapshot();
- assert.equal(view.sessions.find(s=>s.id===made).teacher_id,ids.newManager);
- assert.ok(view.changes.some(c=>c.kind==='makeup'&&c.session_id===extra&&Number(c.units)===1));
+ assert.equal(view.sessions.find(s=>s.id===made).teacher_id,teacher);
+ assert.ok(view.changes.some(c=>c.kind==='makeup'&&c.session_id===extra&&c.teacher_id===teacher&&Number(c.units)===1));
+ await assert.rejects(()=>rpc('activate_external_instructor',{id:teacher,username:'guest-new'}),/尚未由校用帳號服務建立/);
+ await db.exec('reset role');
+ assert.equal((await db.query('select id from auth.users where id=$1',[teacher])).rows.length,0);
+ const paperDay=(await db.query("select (now() at time zone 'Asia/Taipei')::date::text as day")).rows[0].day;
+ const period=(await db.query("insert into club_private.terms(name,start_date,end_date) values('紙本測試期',$1,$1) returning id",[paperDay])).rows[0].id;
+ await as('newManager');
+ await act('save_club',{term_id:period,name:'紙本簽到測試',plan_name:'測試計畫',kind:'社團',teacher_id:ids.newManager,
+  location:'測試教室',capacity:12,rate:450,registration_start:paperDay,registration_end:paperDay});
+ const paperClub=(await snapshot()).clubs.find(c=>c.name==='紙本簽到測試').id;
+ const paperSession=(await rpc('schedule_lesson',{...makeup,club_id:paperClub,session_id:null,starts_at:paperDay+'T00:00:00+08:00',
+  ends_at:paperDay+'T00:30:00+08:00',reason:'紙本簽到驗證'})).rows[0].result.id;
+ await assert.rejects(()=>act('sign_in',{session_id:paperSession}),/依紙本/);
+ await rpc('paper_sign_in',{session_id:paperSession,reason:'已核對親簽'});
+ await assert.rejects(()=>rpc('paper_sign_in',{session_id:paperSession,reason:'重複'}),/已完成簽到/);
+ await act('attendance',{session_id:paperSession,summary:'摘要',marks:{}});
+ const locked=await act('settle',{club_id:paperClub,start_date:paperDay,end_date:paperDay});
+ const billed=(await snapshot()).settlements.find(b=>b.id===locked.id);
+ assert.equal(billed.snapshot.teachers[0].name,data.external_name);
+ assert.ok((await snapshot()).audit.some(a=>a.action==='paper_sign_in'&&a.created_by===ids.newManager&&a.detail.teacher_id===teacher));
+ ids.externalTest=teacher;
+ await db.exec('reset role');
+ await db.query("insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data) values($1,$2,now(),$3)",[teacher,
+  'guest-new@accounts.aimen.invalid',JSON.stringify({aimen_issued_by:ids.newManager,aimen_external_instructor:teacher,aimen_teacher_setup:'a'.repeat(64)})]);
+ await as('externalTest');await assert.rejects(snapshot,/尚未獲授權/);
+ await as('newManager');await rpc('activate_external_instructor',{id:teacher,username:'guest-new'});
+ assert.ok(!(await snapshot()).external_instructors.includes(teacher));
+ await as('externalTest');await assert.rejects(snapshot,/更改密碼/);
+ await db.exec('reset role');
+ await db.query('update club_private.users set must_change_password=false where id=$1',[teacher]);
+ await as('externalTest');
+ assert.ok((await snapshot()).sessions.some(s=>s.id===made&&s.teacher_id===teacher));
+ await assert.rejects(()=>rpc('schedule_lesson',data),/僅行政/);
 });
 await db.close();console.log(`${count} database security scenarios passed`);

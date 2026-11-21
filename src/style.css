@@ -104,3 +104,11 @@
 .manual ol{padding-inline-start:1.4rem;line-height:1.75}
 .manual li+li{margin-top:.65rem}
 @media(max-width:420px){.schedule-time input{padding-inline:5px}}
+
+.roster-control{margin:0}
+.roster-controls{display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin-bottom:12px}
+@media print{
+ .sidebar,.scrim,.topbar,.app-footer,.print-control,.demo-banner{display:none!important}
+ .workspace{margin:0!important;width:100%!important}
+ .week-scroll,.table-wrap{overflow:visible}
+}

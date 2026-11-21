@@ -9,7 +9,7 @@ const OPERATIONS={
  remove_student:'批次退選'
 };
 
-export default function EnrollmentManagement({term,clubs,students,enrollments,busy,action}) {
+export default function EnrollmentManagement({term,clubs,students,enrollments,busy,action,sortControl,sortStudents,printRoster}) {
  const [clubId,setClubId]=useState(clubs[0]?.id||'');
  const [operation,setOperation]=useState('enrolled');
  const [effective,setEffective]=useState(()=>{
@@ -23,12 +23,16 @@ export default function EnrollmentManagement({term,clubs,students,enrollments,bu
  const reviewing=['enrolled','rejected','waitlisted'].includes(operation);
  const needsDate=!['rejected','waitlisted'].includes(operation);
  const clubEnrollments=enrollments.filter(e=>e.club_id===clubId);
- const options=reviewing
-  ? clubEnrollments.filter(e=>['pending','waitlisted'].includes(e.status)&&e.status!==operation).map(e=>({id:e.id,student:students.find(s=>s.id===e.student_id)}))
+ const selectedClub=clubs.find(c=>c.id===clubId);
+ const studentById=new Map(students.map(s=>[s.id,s]));
+ const lookup=entry=>studentById.get(entry.student_id);
+ const enrolled=clubEnrollments.filter(e=>enrolledOn(e,effective)).map(lookup).filter(Boolean);
+ const options=(reviewing
+  ? clubEnrollments.filter(e=>['pending','waitlisted'].includes(e.status)&&e.status!==operation).map(e=>({id:e.id,student:lookup(e)}))
   : students.filter(s=>operation==='remove_student'
     ? clubEnrollments.some(e=>e.student_id===s.id&&enrolledOn(e,effective))
     : !clubEnrollments.some(e=>e.student_id===s.id&&['pending','enrolled','waitlisted'].includes(e.status)&&(!e.end_date||e.end_date>=effective)))
-   .map(student=>({id:student.id,student}));
+   .map(student=>({id:student.id,student}))).filter(row=>row.student).sort((a,b)=>sortStudents(a.student,b.student));
  const count=selected.length;
  const canSubmit=clubId && count>0 && count<=200 && term.status==='active' &&
   (!needsDate || (effective>=term.start_date && effective<=term.end_date)) &&
@@ -51,6 +55,7 @@ export default function EnrollmentManagement({term,clubs,students,enrollments,bu
     <input type="date" min={term.start_date} max={term.end_date} disabled={busy} value={effective} onChange={e=>{setEffective(e.target.value);clearSelection();}}/>
    </label>}
   </div>
+  <div className="roster-controls">{sortControl}{selectedClub&&enrolled.length>0&&<button className="btn print-control" onClick={()=>printRoster(selectedClub,enrolled)}>列印社團名冊</button>}</div>
   {!reviewing&&<label>異動原因<input value={reason} maxLength={300} disabled={busy} onChange={e=>{setReason(e.target.value);setConfirming(false);}}/></label>}
   {clubId&&options.length>0&&<div className="table-wrap"><table>
    <thead><tr><th><input type="checkbox" aria-label="全選學生" disabled={busy||options.length>200}
@@ -74,8 +79,8 @@ export default function EnrollmentManagement({term,clubs,students,enrollments,bu
   {clubEnrollments.length>0&&<details>
    <summary>查看目前報名與錄取紀錄</summary>
    <div className="table-wrap"><table><thead><tr><th>學生</th><th>狀態</th><th>起日</th><th>最後參加日</th><th>繳費狀態</th></tr></thead>
-    <tbody>{clubEnrollments.map(e=><tr key={e.id}><td>{students.find(s=>s.id===e.student_id)?.name}</td>
-     <td>{STATUS_NAMES[e.status]}</td><td>{e.start_date}</td><td>{e.end_date||'—'}</td><td>{e.status==='enrolled'?<select aria-label={(students.find(s=>s.id===e.student_id)?.name||'學生')+'繳費狀態'} disabled={busy||term.status!=='active'} value={e.fee_status||''} onChange={event=>action('fee_status',{id:e.id,status:event.target.value})}><option value="">免繳／未設定</option>{Object.entries(FEE_NAMES).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select>:'—'}</td></tr>)}</tbody>
+    <tbody>{[...clubEnrollments].sort((a,b)=>sortStudents(lookup(a),lookup(b))).map(e=><tr key={e.id}><td>{lookup(e)?.name}</td>
+     <td>{STATUS_NAMES[e.status]}</td><td>{e.start_date}</td><td>{e.end_date||'—'}</td><td>{e.status==='enrolled'?<select aria-label={(lookup(e)?.name||'學生')+'繳費狀態'} disabled={busy||term.status!=='active'} value={e.fee_status||''} onChange={event=>action('fee_status',{id:e.id,status:event.target.value})}><option value="">免繳／未設定</option>{Object.entries(FEE_NAMES).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select>:'—'}</td></tr>)}</tbody>
    </table></div>
   </details>}
  </section>;
