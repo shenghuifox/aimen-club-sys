@@ -5,7 +5,7 @@ import {ROLE_NAMES} from './domain.js';
 import PublicCalendar from './PublicCalendar.jsx';
 import {cardPattern} from '../supabase/functions/club-account-admin/student-access.js';
 
-const seats=Array.from({length:99},(_,i)=>String(i+1));
+const seats=Array.from({length:20},(_,i)=>String(i+1));
 const version=import.meta.env.BASE_URL;
 export const rememberStudentCode=(code)=>{
  try{if(code)localStorage.setItem('aimen-student-device',code);else localStorage.removeItem('aimen-student-device');}catch{}
@@ -15,10 +15,10 @@ function savedCode(){
 }
 
 export default function Entry({card,busy,onTeacher,onStudent,onDemo,showSetup,children}){
- const [identity,setIdentity]=useState(card?'student':'teacher');
- const [classes,setClasses]=useState(null);
  const [remembered,setRemembered]=useState(savedCode);
  const known=card||remembered;
+ const [identity,setIdentity]=useState(known?'student':'teacher');
+ const [classes,setClasses]=useState(null);
  useEffect(()=>{
   if(identity!=='student'||!configured)return;
   const controller=new AbortController();
@@ -37,7 +37,7 @@ export default function Entry({card,busy,onTeacher,onStudent,onDemo,showSetup,ch
    <div className="login-story-head"><div className="brand"><img className="brand-icon" src={version+'logo.svg'} alt=""/><div>隘門國小<small>課後活動管理系統</small></div></div>
     <a className="btn small login-jump" href="#account-login">前往登入</a>
    </div>
-   <PublicCalendar/><small>隘門國小課後活動 · 0.9.1</small>
+   <PublicCalendar/><small>隘門國小課後活動 · 0.9.2</small>
   </section>
   <section className="login-panel" id="account-login">
    <h2>登入隘門國小課後活動</h2>
@@ -67,9 +67,10 @@ export default function Entry({card,busy,onTeacher,onStudent,onDemo,showSetup,ch
      <label>座號<select name="number" required>
       <option value="">請選擇座號</option>{seats.map(v=><option key={v} value={v}>{v} 號</option>)}
      </select></label>
-     <label>OpenID 數字<input name="openid" inputMode="numeric" pattern="[0-9]+" maxLength={40} placeholder="請輸入open id數字" required autoComplete="off"/></label>
+     <label>OpenID 帳號<input name="openid" inputMode="numeric" pattern="[0-9]+" maxLength={40} placeholder="請輸入open id數字" required autoComplete="off"/></label>
      <label>姓名最後一個字<input name="last_character" maxLength={2} required autoComplete="off" placeholder="請輸入姓名最後一個字"/></label>
-     {!known&&<label>學生登入碼<input name="code" autoComplete="off" autoCapitalize="none" required maxLength={48} placeholder="新裝置請輸入學校發給你的登入碼"/></label>}
+     {!known&&<label>學生登入碼<input name="code" autoComplete="off" autoCapitalize="none" required maxLength={48} placeholder="請輸入學校發給你的登入碼"/></label>}
+     {!known&&<p className="note">第一次可直接輸入學校發的登入碼。勾選下方選項後，下次可直接從首頁登入。</p>}
      {!remembered&&<label><span><input name="remember" type="checkbox" style={{width:'auto'}}/> 在我的裝置記住登入碼（共用電腦請勿勾選）</span></label>}
      {remembered&&!card&&<button type="button" className="btn small" onClick={()=>{rememberStudentCode('');setRemembered('');}}>忘記這部裝置的登入碼</button>}
      <button className="btn primary full" disabled={!classes?.value?.length||busy}>{busy?'登入中…':'學生登入'}<ArrowUpRight size={18}/></button>
