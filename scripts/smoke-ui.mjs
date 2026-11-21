@@ -45,6 +45,7 @@ try{
  for(const [role,expected] of roles){
   const context=await browser.newContext();
   const page=await context.newPage();
+  page.setDefaultTimeout(10000);
   const errors=[];
   page.on('pageerror',error=>errors.push(error.message));
   await page.clock.setFixedTime(new Date('2026-11-21T12:00:00+08:00'));
@@ -60,6 +61,7 @@ try{
   const nav=page.locator('.sidebar nav');
   assert.deepEqual((await nav.getByRole('button').allTextContents()).sort(),[...expected].sort(),role);
   for(const label of expected)await visit(page,label);
+  await visit(page,'使用手冊');
   await page.getByRole('heading',is('聯絡教導處')).waitFor();
 
   if(expected.includes('本週課表')){
