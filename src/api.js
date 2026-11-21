@@ -77,3 +77,19 @@ export async function getPublicCalendar(weekStart,signal){
  if(error)throw error;
  return data;
 }
+
+export async function studentClasses(signal){
+ const {data,error}=await supabase.rpc('club_student_classes',{}, {get:true}).abortSignal(signal);
+ if(error)throw error;
+ return data;
+}
+export async function loginStudent(payload){
+ const {data,error}=await supabase.functions.invoke('club-student-login',{body:payload});
+ if(error){
+  const result=await error.context?.json?.().catch(()=>null);
+  throw Error(result?.error||'學生登入暫時無法使用。');
+ }
+ const {data:auth,error:verifyError}=await supabase.auth.verifyOtp({type:'magiclink',token_hash:data.token_hash});
+ if(verifyError||!auth.user)throw Error('登入驗證已失效，請重新送出。');
+ return auth;
+}

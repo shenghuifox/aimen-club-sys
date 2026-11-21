@@ -44,3 +44,6 @@
 .login-story-head .login-jump{display:none;white-space:nowrap;text-decoration:none}
 .login-shell .login-panel{align-self:start;margin:0 auto}
 @media(max-width:680px){.login-story-head .login-jump{display:inline-flex;min-height:40px}}
+
+.entry-roles{display:flex;gap:8px;margin:12px 0 18px}.entry-roles button{flex:1;justify-content:center;min-height:44px}
+.calendar-embed{padding:10px;margin:auto;max-width:780px}.calendar-embed .public-calendar{margin:auto}

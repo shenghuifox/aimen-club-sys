@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2.95.3";
 import { familyRole, issueSchoolBatch, schoolBatchResolver, SCHOOL_BATCH_SIZE } from "./school-batch.js";
+import { randomHex, studentHashes, studentResolver } from "./student-access.js";
 import { initialSchoolPassword, isInitialPassword, isSchoolAccount, schoolEmail, validSchoolPassword } from "./school-auth.js";
 
 const origin = "https://shenghuifox.github.io";
@@ -27,7 +28,7 @@ Deno.serve(async (request) => {
 
   try {
     const body = await request.json();
-    if (!body || !["invite", "create_school", "batch_create_school", "complete_setup", "email", "password"].includes(body.action) ||
+    if (!body || !["invite", "create_school", "batch_create_school", "provision_students", "complete_setup", "email", "password"].includes(body.action) ||
         (["email", "password"].includes(body.action) && (typeof body.id !== "string" || !uuid.test(body.id)))) {
       return reply({ error: "請確認帳號操作" }, 400);
     }
@@ -51,7 +52,7 @@ Deno.serve(async (request) => {
       return reply({ message: "已更新密碼。" });
     }
 
-    const creating = ["invite", "create_school", "batch_create_school"].includes(body.action);
+    const creating = ["invite", "create_school", "batch_create_school", "provision_students"].includes(body.action);
     const { data: permission, error: permissionError } = await user.rpc("club_followup", {
       action: "auth_account", payload: { id: creating ? null : body.id },
     });
@@ -60,11 +61,12 @@ Deno.serve(async (request) => {
     if (creating ? permission?.authorized !== true : targetId !== body.id.toLowerCase()) {
       return reply({ error: "沒有操作此帳號的權限" }, 403);
     }
-    if (body.action === "create_school" || body.action === "batch_create_school") {
+    if (["create_school", "batch_create_school", "provision_students"].includes(body.action)) {
       const { data: identity, error: identityError } = await user.auth.getUser(authorization.slice(7));
       if (identityError || !identity.user) return reply({ error: "請重新登入" }, 401);
       const issuer = identity.user.id;
-      async function issue(row: { username: string; name: string; role: string; student_id?: string }) {
+      async function issue(row: { username: string; name: string; role: string; student_id?: string },
+        roster?: Record<string, unknown>) {
         const alias = schoolEmail(row.username)!;
         const password = initialSchoolPassword();
         const { data: created, error } = await auth.createUser({
@@ -77,8 +79,8 @@ Deno.serve(async (request) => {
         }
         const id = created.user.id;
         const username = alias.split("@")[0];
-        const { error: registerError } = await user.rpc("club_register_school_account", {
-          payload: { id, username, name: row.name, role: row.role, student_id: familyRole(row.role) ? row.student_id : null },
+        const { error: registerError } = await user.rpc(roster ? "club_provision_student" : "club_register_school_account", {
+          payload: { id, username, name: row.name, role: row.role, student_id: familyRole(row.role) ? row.student_id : null, ...roster },
         });
         if (registerError) {
           const { error: cleanupError } = await auth.deleteUser(id);
@@ -88,7 +90,7 @@ Deno.serve(async (request) => {
         return { username, initial_password: password };
       }
 
-      if (body.action === "batch_create_school") {
+      if (body.action === "batch_create_school" || body.action === "provision_students") {
         if (!Array.isArray(body.rows) || body.rows.length === 0 || body.rows.length > SCHOOL_BATCH_SIZE ||
             typeof body.term_id !== "string" || !uuid.test(body.term_id)) {
           return reply({ error: "請選擇學期並確認匯入筆數。" }, 400);
@@ -99,12 +101,46 @@ Deno.serve(async (request) => {
         if (!snapshot.terms.some((term: { id: string; status: string }) => term.id === termId && term.status === "active")) {
           return reply({ error: "請選擇使用中的學期。" }, 400);
         }
-        return reply({ results: await issueSchoolBatch(body.rows, schoolBatchResolver(snapshot, termId), issue) });
+        if (body.action === "batch_create_school") {
+          return reply({ results: await issueSchoolBatch(body.rows, schoolBatchResolver(snapshot, termId), row =>
+            row.role === "stu" || row.role === "guardian" ? {error:"此身分請使用學生管理。"} : issue(row)) });
+        }
+        const resolve = studentResolver(snapshot, termId);
+        const results = [];
+        for (const raw of body.rows) {
+          let row;
+          try { row = resolve(raw); } catch (error) {
+            results.push({status:"failed",error:error instanceof Error ? error.message : "請核對名冊。"});
+            continue;
+          }
+          const replace = body.replace === true && body.rows.length === 1;
+          if (row.alreadyBound && (!row.openid || row.hasLink && !replace)) {
+            results.push({status:"skipped",error:row.hasLink ? "已發行登入連結。需更新時請個別補發。" : "帳號已建立，尚未填入 OpenID。"});
+            continue;
+          }
+          try {
+            const card = row.openid ? randomHex(24) : "";
+            const {class_name,number,name} = row;
+            const payload = {class_name,number,name,term_id:termId,replace,
+              ...(card ? await studentHashes(card,row.openid) : {})};
+            const result = row.alreadyBound
+              ? await user.rpc("club_provision_student",{payload})
+              : await issue({username:"s-"+randomHex(12),name,role:"stu"},payload);
+            if (result.error) {
+              results.push({status:"failed",error:typeof result.error==="string" ? result.error : result.error.message});
+              continue;
+            }
+            results.push({status:"created",student_link:card ? redirectTo+"#student="+card : null});
+          } catch {
+            results.push({status:"unknown",error:"結果待確認，請查看學生管理。"});
+          }
+        }
+        return reply({results});
       }
 
       const alias = schoolEmail(body.username);
       const name = typeof body.name === "string" ? body.name.trim() : "";
-      if (!alias || !name || name.length > 100 || !["stu", "guardian", "clubtr", "hrtr", "admin"].includes(body.role) ||
+      if (!alias || !name || name.length > 100 || !["clubtr", "hrtr", "admin"].includes(body.role) ||
           (familyRole(body.role) && (typeof body.student_id !== "string" || !uuid.test(body.student_id)))) {
         return reply({ error: "請核對帳號、姓名、角色及綁定的學生。" }, 400);
       }
@@ -116,6 +152,7 @@ Deno.serve(async (request) => {
       return reply({ error: "請輸入有效電子郵件" }, 400);
     }
     if (body.action === "invite") {
+      if (!["admin", "clubtr", "hrtr"].includes(body.role)) return reply({error:"請選擇教職員角色。"},400);
       const row = { email, name: body.name, role: body.role, class_name: body.class_name, number: body.number };
       const { data: result, error } = body.role === "admin"
         ? await user.rpc("club_prepare_admin_account", { payload: row })

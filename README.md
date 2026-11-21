@@ -28,6 +28,14 @@ Node 24，pnpm 11.25.0。`pnpm install`、`pnpm test`、`pnpm test:db`、`pnpm b
 
 main 推送後，`.github/workflows/pages.yml` 執行單元與資料庫測試，再建置部署。GitHub Settings → Pages → Source 須選 GitHub Actions。
 
+## 0.9.0 教師與學生入口
+
+- 教職員從「我是老師」使用既有帳號。帳號管理提供行政、班級導師及社團老師三種身分。
+- 行政從「學生管理」匯入 CSV 或貼上「班級、座號、姓名、OpenID數字」。OpenID 欄空白時先建立名冊與帳號，日後可個別發行連結。既有同班同座號及姓名會沿用名冊，遇到同座號不同姓名會要求核對。
+- 個人登入連結請交付學生本人。開啟後選班級與座號，再輸入既有 OpenID 數字及姓名末字。OpenID 只在本系統核對，為保護個人報名與課表，另核對連結中的隨機憑證。補發會使原連結無效。
+- 套用 `011_student_portal.sql` 後部署 `club-account-admin` 及 `club-student-login`。上線時一次性套用 `012_separate_test_term.sql`，以原本的學期識別保存 115test 的歷程，並建立空白 115-1。
+- 學校官網可使用 `?embed=calendar` 的獨立公開行事曆。
+
 ## 0.8.2 登入頁公開行事曆
 
 - 登入頁左側顯示週一到週日的社團行事曆。手機上方可依日期篩選，或查看整週的課程。
