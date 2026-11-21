@@ -39,3 +39,8 @@
 .week-event:hover,.week-event:focus-visible{z-index:2;background:#cfe7d8}
 .week-event span,.week-event strong{display:block;text-overflow:ellipsis;white-space:nowrap;overflow:hidden}
 .week-outside{padding:10px 22px 0}.week-outside button{margin:0 8px 8px 0}
+
+.login-story-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.login-story-head .login-jump{display:none;white-space:nowrap;text-decoration:none}
+.login-shell .login-panel{align-self:start;margin:0 auto}
+@media(max-width:680px){.login-story-head .login-jump{display:inline-flex;min-height:40px}}
