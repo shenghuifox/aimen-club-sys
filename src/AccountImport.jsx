@@ -1,3 +1,4 @@
+import {accountOrder} from './roster-sort.js';
 import React,{useState} from 'react';
 import {X,Download} from 'lucide-react';
 import {ACCOUNT_HEADERS,STAFF_HEADERS,STUDENT_HEADERS,parseAccountImport,parseStaffImport,parseStudentImport} from './account-import.js';
@@ -107,11 +108,12 @@ export default function AccountImport({type,term,busy,demo,snapshot,close,save})
 }
 
 export function PendingAccounts({entries,students,terms,busy,action}) {
+ const [descending,setDescending]=useState(false);
  if (!entries.length) return null;
  return <section className="panel">
   <div className="panel-head"><div><h2>待啟用帳號</h2><p>電子郵件完成驗證並首次登入後，帳號才會取得系統權限。</p></div></div>
-  <div className="table-wrap"><table><thead><tr><th>電子郵件／姓名</th><th>角色</th><th>學生名冊</th><th>操作</th></tr></thead>
-   <tbody>{entries.map(entry=>{
+  <div className="table-wrap"><table><thead><tr><th aria-sort={descending?'descending':'ascending'}><button className="btn small" onClick={()=>setDescending(!descending)}>電子郵件／姓名 {descending?'↓':'↑'}</button></th><th>角色</th><th>學生名冊</th><th>操作</th></tr></thead>
+   <tbody>{[...entries].sort((a,b)=>(descending?-1:1)*accountOrder(a,b)).map(entry=>{
     const student=students.find(s=>s.id===entry.student_id);
     const term=terms.find(t=>t.id===student?.term_id);
     return <tr key={entry.email}>
