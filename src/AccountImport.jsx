@@ -34,6 +34,7 @@ export default function AccountImport({type,term,busy,demo,snapshot,close,save})
  const title=school?'批次匯入校用帳號':'既有電子郵件帳號匯入';
  const headers=school?SCHOOL_HEADERS:ACCOUNT_HEADERS;
  const [input,setInput]=useState('');
+ const [reading,setReading]=useState(false);
  const [preview,setPreview]=useState(null);
  const [error,setError]=useState('');
  const [progress,setProgress]=useState(0);
@@ -46,9 +47,12 @@ export default function AccountImport({type,term,busy,demo,snapshot,close,save})
  async function readFile(event) {
   const file=event.target.files[0];
   if (!file) return;
-  if (file.size>256000) { changeInput('');setError('檔案過大，請拆分後匯入。');return; }
+  changeInput('');
+  if (file.size>256000) { setError('檔案過大，請拆分後匯入。');return; }
+  setReading(true);
   try { changeInput(await file.text()); }
-  catch { changeInput('');setError('無法讀取檔案，請另存成 UTF-8 CSV 後重試。'); }
+  catch { setError('無法讀取檔案，請另存成 UTF-8 CSV 後重試。'); }
+  finally { setReading(false); }
  }
  function showPreview(){
   try{
@@ -76,13 +80,14 @@ export default function AccountImport({type,term,busy,demo,snapshot,close,save})
     <p className="note">目前學期為 {term?.name||'未選擇'}。{school?'使用 CSV 或貼上試算表資料。新帳號無須電子郵件即可登入。':'已驗證的電子郵件帳號會立即綁定，其他帳號待完成驗證後啟用。'}</p>
     <div className="toolbar">
      <button type="button" className="btn" disabled={busy} onClick={()=>downloadCsv(school?'校用帳號匯入範本':'電子郵件帳號匯入範本',school?[headers,example]:[headers])}><Download size={16}/>下載 CSV 範本</button>
-     <label>上傳 UTF-8 CSV<input type="file" accept=".csv,text/csv" disabled={busy} onChange={readFile}/></label>
+     <label>上傳 UTF-8 CSV<input type="file" accept=".csv,text/csv" disabled={busy||reading} onChange={readFile}/></label>
     </div>
     <label>或貼上含標題的 CSV／試算表資料
-     <textarea rows="6" value={input} disabled={busy} onChange={e=>changeInput(e.target.value)}/>
+     <textarea rows="6" value={input} disabled={busy||reading} onChange={e=>changeInput(e.target.value)}/>
     </label>
     <p className="note">{school?'可匯入學生、家長、社團老師及班級導師。學生與家長請填班級、座號及學生姓名，學生帳號的學生姓名可沿用姓名欄。匯入前請刪除範本的示例列。':'角色填「學生」、「社團老師」或「班級導師」。學生的班級、座號及姓名須與名冊完全相同。'}教師請留空名冊欄位。座號如有前導 0，請在試算表以文字格式填寫。</p>
     {school&&(demo||term?.status!=='active')&&<p className="note">{demo?'試用模式可預覽格式。正式建帳請用行政帳號登入。':'請切換至使用中的學期後再匯入。'}</p>}
+    {preview?.warnings.some(Boolean)&&<p className="note">請核對預覽中的提示。匯入時會再次比對名冊，符合條件的項目才會建立。</p>}
     {error&&<p className="notice" role="alert">{error}</p>}
     {preview&&<div className="table-wrap"><table><thead><tr>{headers.map(header=><th key={header}>{header}</th>)}{school&&<th>名冊檢查</th>}</tr></thead>
      <tbody>{preview.rows.map((row,index)=><tr key={row.username||row.email}><td>{row.username||row.email}</td><td>{row.name}</td><td>{ROLE_NAMES[row.role]}</td><td>{row.class_name}</td><td>{row.number}</td>{school&&<><td>{row.student_name}</td><td>{preview.warnings[index]||'通過'}</td></>}</tr>)}</tbody>
