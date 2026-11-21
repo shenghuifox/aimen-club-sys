@@ -1,3 +1,4 @@
+import {version as appVersion} from '../package.json';
 import React,{useEffect,useState} from 'react';
 import {ArrowUpRight} from 'lucide-react';
 import {configured,googleEnabled,supabase,studentClasses} from './api.js';
@@ -37,7 +38,7 @@ export default function Entry({card,busy,onTeacher,onStudent,onDemo,showSetup,ch
    <div className="login-story-head"><div className="brand"><img className="brand-icon" src={version+'logo.svg'} alt=""/><div>隘門國小<small>課後活動管理系統</small></div></div>
     <a className="btn small login-jump" href="#account-login">前往登入</a>
    </div>
-   <PublicCalendar/><small>隘門國小課後活動 · 0.9.2</small>
+   <PublicCalendar/><small>隘門國小課後活動 · {appVersion}</small>
   </section>
   <section className="login-panel" id="account-login">
    <h2>登入隘門國小課後活動</h2>
