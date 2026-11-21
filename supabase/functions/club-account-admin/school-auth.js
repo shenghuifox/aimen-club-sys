@@ -11,10 +11,11 @@ export function validSchoolPassword(password){
   &&/[a-z]/i.test(password)&&/\d/.test(password);
 }
 
-const ISSUED_PASSWORD=/^Amps7[a-f0-9]{24}$/;
+const initialAlphabet='abcdefghjkmnpqrstuvwxyz023456789';
+const ISSUED_PASSWORD=/^a7[abcdefghjkmnpqrstuvwxyz023456789]{14}$/;
 export const isInitialPassword=password=>ISSUED_PASSWORD.test(password);
 export function initialSchoolPassword(){
- const random=crypto.getRandomValues(new Uint8Array(12));
- return 'Amps7'+Array.from(random,n=>n.toString(16).padStart(2,'0')).join('');
+ const random=crypto.getRandomValues(new Uint8Array(14));
+ return 'a7'+Array.from(random,n=>initialAlphabet[n&31]).join('');
 }
 export const isSchoolAccount=email=>email?.endsWith('@'+SCHOOL_ACCOUNT_DOMAIN)===true;

@@ -388,14 +388,14 @@ await check('新校用帳號限行政核發，行政、導師及社團老師首�
   const before='20000000-0000-0000-0000-00000000000'+index;
   const after='30000000-0000-0000-0000-00000000000'+index;
   await db.exec('reset role');
-  await db.query('insert into auth.sessions values($1,$2,clock_timestamp())',[before,id]);
+  await db.query("insert into auth.sessions values($1,$2,clock_timestamp()-interval '1 second')",[before,id]);
   await db.exec('set role service_role');await confirmSchoolPassword(id);
   await as(username);
   await db.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({session_id:before})]);
   assert.equal(await changeRequired(),false);
   await assert.rejects(snapshot,/重新登入/);
   await db.exec('reset role');
-  await db.query('insert into auth.sessions values($1,$2,clock_timestamp())',[after,id]);
+  await db.query("insert into auth.sessions values($1,$2,clock_timestamp()+interval '1 second')",[after,id]);
   await as(username);
   await db.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({session_id:after})]);
   assert.deepEqual((await snapshot()).users.find(u=>u.id===id).roles,[role]);

@@ -15,7 +15,7 @@ begin
  if actor.must_change_password then raise exception '首次登入請先更改密碼'; end if;
  if actor.school_password_changed_at is not null and not exists(
   select 1 from auth.sessions s where s.id=(auth.jwt()->>'session_id')::uuid
-   and s.user_id=actor.id and s.created_at>=actor.school_password_changed_at
+   and s.user_id=actor.id and s.created_at>actor.school_password_changed_at
  ) then raise exception '密碼已更新，請重新登入'; end if;
  return actor;
 end $$;
