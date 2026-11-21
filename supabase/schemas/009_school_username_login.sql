@@ -75,7 +75,7 @@ begin
 end $$;
 
 create function public.club_complete_school_password(account_id uuid) returns void
-language sql security invoker set search_path='' as $ select club_private.complete_school_password(account_id) $;
+language sql security invoker set search_path='' as $$ select club_private.complete_school_password(account_id) $$;
 
 create function club_private.keep_school_username() returns trigger
 language plpgsql set search_path='' as $$
