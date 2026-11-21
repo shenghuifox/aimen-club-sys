@@ -71,3 +71,9 @@ export async function login(username,password){
  if(error)throw Error('登入失敗，請確認帳號與密碼；如需協助，請聯絡學校。');
  return data;
 }
+
+export async function getPublicCalendar(weekStart,signal){
+ const {data,error}=await supabase.rpc('club_public_calendar',{p_week:weekStart},{get:true}).abortSignal(signal);
+ if(error)throw error;
+ return data;
+}
