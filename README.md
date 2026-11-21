@@ -28,6 +28,13 @@ Node 24，pnpm 11.25.0。`pnpm install`、`pnpm test`、`pnpm test:db`、`pnpm b
 
 main 推送後，`.github/workflows/pages.yml` 執行單元與資料庫測試，再建置部署。GitHub Settings → Pages → Source 須選 GitHub Actions。
 
+## 0.7.2 邀請與密碼回復
+
+- 邀請收件人以完整電子郵件作為登入帳號。收件人驗證一次性連結後自行設定密碼。
+- 若原始郵件仍導向 localhost，請勿點擊連結，先從郵件複製完整連結，在正式站選「驗證邀請連結」貼上。如果已使用或過期，可用「忘記或尚未設定密碼」申請新連結，再從郵件複製新連結驗證。
+- 託管 Supabase 的 Authentication → URL Configuration 須把 Site URL 與 Redirect URLs 指向 `https://shenghuifox.github.io/aimen-club-sys/`。GitHub Pages 部署不會變更 Supabase 託管專案設定。
+- 於託管 Supabase 的 Authentication → Email Templates 將 Invite user 和 Reset password 分別套用 `supabase/templates/invite.html` 及 `supabase/templates/recovery.html`。範本直接導向正式域名，用一次性 token hash 於網站驗證，並要求收件人主動按驗證按鈕。
+
 ## 0.7.1 操作更新
 
 - 鐘點費印領清冊的 Excel 與列印只包含清冊，採 A4 直式單頁。簽到表採 A4 橫式單頁。
