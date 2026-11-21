@@ -28,6 +28,12 @@ Node 24，pnpm 11.25.0。`pnpm install`、`pnpm test`、`pnpm test:db`、`pnpm b
 
 main 推送後，`.github/workflows/pages.yml` 執行單元與資料庫測試，再建置部署。GitHub Settings → Pages → Source 須選 GitHub Actions。
 
+## 0.8.2 登入頁公開行事曆
+
+- 登入頁左側顯示週一到週日的社團行事曆。手機上方可依日期篩選，或查看整週的課程。
+- 公開行事曆列出使用中學期已發布社團的名稱、時間、地點及停課標示。
+- 先套用 `supabase/schemas/010_public_calendar.sql`，再部署網頁。
+
 ## 0.8.1 批次匯入校用帳號
 
 - 開啟「帳號管理 → 批次匯入校用帳號」，選擇使用中的學期，下載 CSV 範本或貼上試算表資料。每次可匯入 1 至 200 筆，先預覽再確認。

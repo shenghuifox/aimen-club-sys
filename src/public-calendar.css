@@ -1,0 +1,33 @@
+.public-calendar{
+ width:100%;max-width:760px;align-self:center;padding:clamp(14px,2.5vw,28px);
+ border:1px solid #dbe6dd;border-radius:18px;background:#fff;color:#244a3e;
+}
+.public-calendar header h1{display:flex;align-items:center;gap:9px;margin:0;font-size:clamp(21px,2.3vw,29px)}
+.public-calendar header p{color:#51675b;margin:6px 0 15px;font-size:14px}
+.public-week-tools{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-bottom:12px}
+.public-week-tools strong{min-width:111px;text-align:center;font-variant-numeric:tabular-nums;font-size:14px}
+.public-week-tools button,.public-agenda-head button{min-height:40px}
+.public-calendar-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.public-calendar-days button{
+ display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0;min-height:66px;
+ padding:7px 1px;border:1px solid #d9e7dd;border-radius:8px;background:#f6faf7;color:#244a3e;
+ font-size:clamp(10px,1.2vw,13px);font-variant-numeric:tabular-nums;white-space:nowrap;
+}
+.public-calendar-days button[aria-current="date"]{border-color:#548271}
+.public-calendar-days button[aria-pressed="true"]{background:#245c4f;border-color:#245c4f;color:#fff}
+.public-calendar-days button:focus-visible,.public-calendar button:focus-visible{outline:2px solid #297060;outline-offset:2px}
+.public-day-count{font-size:.87em}
+.public-agenda-head{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:15px 0 4px}
+.public-agenda-head h2{font-size:16px;margin:0}
+.public-agenda-group h3{margin:14px 0 0;font-size:13px;color:#496458}
+.public-agenda-group ul{margin:4px 0 0;padding:0;list-style:none}
+.public-agenda-group li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:10px;
+ padding:9px 0;border-top:1px solid #edf2ee;font-size:14px}
+.public-agenda-course{min-width:0;overflow-wrap:anywhere}
+.public-agenda-course span{display:block;color:#51675b;font-size:13px}
+.public-agenda-time{font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.public-calendar-message{color:#51675b;margin:16px 0 2px;font-size:14px}
+@media(max-width:420px){
+ .public-agenda-group li{gap:6px}
+ .public-agenda-time{font-size:12px}
+}

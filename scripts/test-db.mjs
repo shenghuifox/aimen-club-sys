@@ -19,6 +19,7 @@ await db.exec(await fs.readFile(new URL('../supabase/schemas/006_operations_hand
 await db.exec(await fs.readFile(new URL('../supabase/schemas/007_requests_and_accounts.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../supabase/schemas/008_single_admin_invites.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../supabase/schemas/009_school_username_login.sql',import.meta.url),'utf8'));
+await db.exec(await fs.readFile(new URL('../supabase/schemas/010_public_calendar.sql',import.meta.url),'utf8'));
 const ids={admin:'00000000-0000-0000-0000-000000000001',stu:'00000000-0000-0000-0000-000000000002',clubtr:'00000000-0000-0000-0000-000000000003',hrtr:'00000000-0000-0000-0000-000000000004',other:'00000000-0000-0000-0000-000000000005'};
 for(const [role,id] of Object.entries(ids)){await db.query('insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())',[id,role+'@test.aimen.invalid']);await db.query('insert into club_private.users(id,username,name,roles) values($1,$2,$2,$3)',[id,role,[role==='other'?'stu':role]]);}
 const as=async(role)=>{await db.exec('reset role');await db.query("select set_config('request.jwt.claim.sub',$1,false)",[ids[role]||'']);await db.exec('set role '+(role==='anon'?'anon':'authenticated'));};
@@ -423,5 +424,41 @@ await check('新學生及家長可直接登入，只能查看綁定的學生資�
  await as('family0');
  assert.equal(await changeRequired(),true);
  await assert.rejects(snapshot,/首次登入/);
+});
+await check('公開行事曆限已發布社團及使用中學期，匿名僅取得允許的欄位',async()=>{
+ await db.exec('reset role');
+ const [{id:archived}]=(await db.query("insert into club_private.terms(name,start_date,end_date,status) values('封存測試','2026-08-01','2027-01-31','archived') returning id")).rows;
+ const makeClub=async(termId,name,status)=>(await db.query(
+  `insert into club_private.clubs(term_id,name,plan_name,kind,teacher_id,location,capacity,rate,registration_start,registration_end,status)
+   values($1,$2,'內部計畫','社團',$3,'公開地點',10,500,'2026-08-01','2027-01-31',$4) returning id`,
+  [termId,name,ids.clubtr,status])).rows[0].id;
+ const pub=await makeClub(term,'公開社團','published');
+ const draft=await makeClub(term,'草稿社團','draft');
+ const old=await makeClub(archived,'封存社團','published');
+ const makeSession=(club,starts,ends,status='scheduled')=>db.query(
+  `insert into club_private.sessions(club_id,teacher_id,starts_at,ends_at,units,rate,summary,status) values($1,$2,$3,$4,1,500,'內部教學摘要',$5)`,
+  [club,ids.clubtr,starts,ends,status]);
+ await makeSession(pub,'2026-11-15T23:30:00+08:00','2026-11-16T00:00:00+08:00');
+ await makeSession(pub,'2026-11-16T00:00:00+08:00','2026-11-16T00:30:00+08:00');
+ await makeSession(pub,'2026-11-22T17:00:00+08:00','2026-11-22T18:00:00+08:00','cancelled');
+ await makeSession(pub,'2026-11-23T00:00:00+08:00','2026-11-23T00:30:00+08:00');
+ for(const club of [draft,old])await makeSession(club,'2026-11-16T12:00:00+08:00','2026-11-16T13:00:00+08:00');
+
+ const calendar=async date=>(await db.query('select * from public.club_public_calendar($1)',[date])).rows;
+ await as('anon');
+ const publicRows=await calendar('2026-11-16');
+ assert.ok(!publicRows.some(r=>['草稿社團','封存社團'].includes(r.club_name)));
+ const rows=publicRows.filter(r=>r.club_name==='公開社團');
+ assert.equal(rows.length,2);
+ assert.deepEqual(Object.keys(rows[0]).sort(),['cancelled','club_name','ends_at','location','starts_at']);
+ assert.equal(rows[0].location,'公開地點');
+ assert.equal(new Date(rows[0].starts_at).toISOString(),'2026-11-15T16:00:00.000Z');
+ assert.equal(rows[1].cancelled,true);
+ assert.equal((await calendar('2026-11-17')).length,0);
+ assert.ok((await calendar('2026-11-23')).some(r=>r.club_name==='公開社團'));
+ await assert.rejects(()=>db.query('select * from club_private.sessions'),/permission denied/);
+ await assert.rejects(snapshot,/permission denied/);
+ await as('stu');
+ assert.deepEqual(await calendar('2026-11-16'),publicRows);
 });
 await db.close();console.log(`${count} database security scenarios passed`);
