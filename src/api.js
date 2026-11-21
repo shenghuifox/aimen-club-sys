@@ -2,6 +2,7 @@ import {createClient} from '@supabase/supabase-js';
 import {seed,demoAction} from './demo.js';
 const env=import.meta.env;
 export const configured=Boolean(env.VITE_SUPABASE_URL&&env.VITE_SUPABASE_PUBLISHABLE_KEY);
+export const authProjectUrl=env.VITE_SUPABASE_URL;
 export const googleEnabled=env.VITE_GOOGLE_AUTH_ENABLED==='true';
 export const supabase=configured?createClient(env.VITE_SUPABASE_URL,env.VITE_SUPABASE_PUBLISHABLE_KEY):null;
 const key='aimen-demo-v2';

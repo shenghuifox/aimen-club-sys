@@ -1,8 +1,9 @@
 import React,{useEffect,useState} from 'react';
+import {readAuthCallback,parseSetupLink} from './auth-callback.js';
 import {createRoot} from 'react-dom/client';
 import {LayoutDashboard,CalendarDays,BookOpen,Users,ClipboardCheck,FileCheck2,ArrowLeftRight,Wallet,ShieldCheck,Settings,Menu,LogOut,ChevronLeft,ChevronRight,ArrowUpRight,Plus,Search,Download,Bell,Check,Clock,Leaf,X,GraduationCap,RefreshCw} from 'lucide-react';
 import {ROLE_NAMES,STATUS_NAMES,FEE_NAMES,SCHEDULE_NAMES,has,dateKey,addDays,weekDays,timeText,stamp,money,enrolledOn,settlementPreview} from './domain.js';
-import {configured,googleEnabled,supabase,loadDemo,resetDemo,getLoginSnapshot,getSnapshot,runAction,login} from './api.js';
+import {configured,authProjectUrl,googleEnabled,supabase,loadDemo,resetDemo,getLoginSnapshot,getSnapshot,runAction,login} from './api.js';
 import {downloadCsv,downloadPayroll,printReport} from './reports.js';
 import {FIRST_HOUR,LAST_HOUR,dayEvents} from './calendar.js';
 import './style.css';
@@ -56,15 +57,50 @@ function InstallHelp(){
 }
 
 const LOGO=import.meta.env.BASE_URL+'logo.svg';
-const invitedLogin=/(?:^|[&#])type=(?:invite|recovery)(?:&|$)/.test(location.hash);
+const authCallback=readAuthCallback(location);
+const siteUrl=new URL(import.meta.env.BASE_URL,location.origin).href;
+if(authCallback?.proof||authCallback?.invalid){
+ const clean=new URL(location.href);
+ for(const key of ['type','token_hash','error','error_code','error_description'])clean.searchParams.delete(key);
+ clean.hash='';
+ history.replaceState(history.state,'',clean);
+}
 function App(){
- const [choosePassword,setChoosePassword]=useState(invitedLogin);
+ const [setup,setSetup]=useState(authCallback?'verify':'');
+ const [setupProof,setSetupProof]=useState(authCallback?.proof||null);
+ const [setupUser,setSetupUser]=useState(null);
+ const [setupMessage,setSetupMessage]=useState(authCallback?.invalid?'連結已失效，請貼上尚未使用的邀請連結或申請重設密碼。':'');
  const [recurring,setRecurring]=useState(false),[changeHistory,setChangeHistory]=useState(null);
  const [accountImport,setAccountImport]=useState(false);
  const [mode,setMode]=useState(null),[data,setData]=useState(null),[user,setUser]=useState(null),[page,setPage]=useState('home'),[term,setTerm]=useState(''),[menu,setMenu]=useState(false),[modal,setModal]=useState(null),[busy,setBusy]=useState(false),[toast,setToast]=useState(null),[week,setWeek]=useState(dateKey()),[search,setSearch]=useState(''),[billClub,setBillClub]=useState(''),[billStart,setBillStart]=useState(addDays(weekDays(dateKey())[0],-7)),[billEnd,setBillEnd]=useState(addDays(weekDays(dateKey())[0],-1)),[preview,setPreview]=useState(null),[chosenSession,setChosenSession]=useState(''),[marks,setMarks]=useState({}),[summary,setSummary]=useState('');
  const notice=(message,error=false)=>{setToast({message,error});};
  useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(null),6500);return()=>clearTimeout(t);},[toast]);
- useEffect(()=>{if(!supabase||choosePassword)return;supabase.auth.getSession().then(async({data:{session}})=>{if(session)try{const snapshot=await getLoginSnapshot();enter(snapshot,'live',session.user.id);}catch(e){notice(e.message,true);}});},[choosePassword]);
+ useEffect(()=>{
+  if(!supabase||setup)return;
+  let active=true;
+  supabase.auth.getSession().then(async({data:{session}})=>{
+   if(!active||!session)return;
+   try {
+    const snapshot=await getLoginSnapshot();
+    if(active)enter(snapshot,'live',session.user.id);
+   }catch(error){if(active)notice(error.message,true);}
+  });
+  return ()=>{active=false;};
+ },[setup]);
+ useEffect(()=>{
+  if(!configured||!authCallback?.accessToken)return;
+  let active=true;
+  supabase.auth.getSession().then(({data:{session}})=>{
+   if(!active)return;
+   if(session?.access_token!==authCallback.accessToken){
+    setSetupMessage('連結已失效，請貼上尚未使用的邀請連結或申請重設密碼。');
+    return;
+   }
+   setSetupUser(session.user.id);
+   setSetup('password');
+  });
+  return ()=>{active=false;};
+ },[]);
  useEffect(()=>{
   if(mode!=='live'||!user) return;
   let current=true;
@@ -113,25 +149,69 @@ function App(){
  const openForm=(title,fields,values,submit,note,button)=>setModal({title,fields,values,submit,note,button});
  const jump=p=>{setPage(p);setMenu(false);setSearch('');setPreview(null);};
  const logout=async()=>{setMode(null);setUser(null);setData(null);setPage('home');if(mode==='live')await supabase.auth.signOut({scope:'local'});};
- if(choosePassword)return <main className="login-panel">
-  <h1>設定登入密碼</h1><Support/>
-  <form onSubmit={async e=>{
-   e.preventDefault();setBusy(true);
-   try {
-    const form=new FormData(e.currentTarget),password=form.get('password');
-    if(password!==form.get('confirm')||new TextEncoder().encode(password).length>72)throw Error('請確認兩次密碼相同，且不超過 72 個位元組。');
-    const {error}=await supabase.auth.updateUser({password});
-    if(error)throw Error('邀請連結已失效或無法設定密碼，請聯絡學校。');
-    setChoosePassword(false);
-   }catch(error){notice(error.message,true);}
-   finally{setBusy(false);}
-  }}>
-   <label>新密碼<input type="password" name="password" required minLength={12} autoComplete="new-password"/></label>
+ async function verifySetup(event){
+  event.preventDefault();
+  const proof=setupProof||parseSetupLink(String(new FormData(event.currentTarget).get('link')||''),authProjectUrl,siteUrl);
+  if(!proof){setSetupMessage('無法辨識連結。請從原始郵件複製本系統的完整邀請或重設連結。');return;}
+  setBusy(true);
+  setSetupMessage('');
+  try {
+   const {data,error}=await supabase.auth.verifyOtp(proof);
+   if(error||!data.session)throw Error('連結已使用或過期。若曾跳到 localhost，請改用重設密碼。');
+   setSetupUser(data.session.user.id);
+   setSetupProof(null);
+   setSetup('password');
+  }catch(error){setSetupMessage(error.message);}
+  finally{setBusy(false);}
+ }
+ async function saveSetupPassword(event){
+  event.preventDefault();setBusy(true);setSetupMessage('');
+  try {
+   const form=new FormData(event.currentTarget),password=String(form.get('password')||'');
+   if(password!==form.get('confirm')||password.length<12||new TextEncoder().encode(password).length>72)
+    throw Error('請確認兩次密碼相同，至少 12 字元，且不超過 72 個位元組。');
+   const {data:{session}}=await supabase.auth.getSession();
+   if(!setupUser||session?.user.id!==setupUser)throw Error('驗證工作階段已變更，請重新開啟或重設連結。');
+   const {error}=await supabase.auth.updateUser({password});
+   if(error)throw Error('無法儲存密碼，請重新驗證或聯絡學校。');
+   setSetupUser(null);setSetup('');
+  }catch(error){setSetupMessage(error.message);}
+  finally{setBusy(false);}
+ }
+ async function requestPasswordReset(event){
+  event.preventDefault();setBusy(true);setSetupMessage('');
+  try {
+   const email=String(new FormData(event.currentTarget).get('email')||'').trim();
+   const {error}=await supabase.auth.resetPasswordForEmail(email,{redirectTo:siteUrl});
+   if(error)throw Error('目前無法寄出重設郵件，請稍後重試或聯絡學校。');
+   setSetupMessage('如果帳號已建立，請查收重設密碼郵件。');
+  }catch(error){setSetupMessage(error.message);}
+  finally{setBusy(false);}
+ }
+ function showSetup(next){setSetupProof(null);setSetupMessage('');setSetup(next);}
+ if(setup)return <main className="login-panel">
+  <h1>{setup==='password'?'設定登入密碼':setup==='reset'?'申請重設密碼':'驗證邀請或重設連結'}</h1><Support/>
+  {setup==='verify'&&<form onSubmit={verifySetup}>
+   {setupProof?<p>按下驗證後，即可設定登入密碼。</p>:<label>郵件中的完整連結<input name="link" type="url" autoComplete="off" required/></label>}
+   <button className="btn primary" disabled={!configured||busy}>驗證連結</button>
+  </form>}
+  {setup==='reset'&&<form onSubmit={requestPasswordReset}>
+   <label>登入電子郵件<input type="email" name="email" required autoComplete="email"/></label>
+   <button className="btn primary" disabled={!configured||busy}>寄送重設郵件</button>
+  </form>}
+  {setup==='password'&&<form onSubmit={saveSetupPassword}>
+   <label>新密碼（至少 12 字元）<input type="password" name="password" required minLength={12} autoComplete="new-password"/></label>
    <label>再輸入一次<input type="password" name="confirm" required minLength={12} autoComplete="new-password"/></label>
-   <button className="btn primary" disabled={busy}>儲存密碼並登入</button>
-  </form>{toast&&<p role="alert">{toast.message}</p>}
+   <button className="btn primary" disabled={!configured||busy}>儲存密碼並登入</button>
+  </form>}
+  {setupMessage&&<p role="status">{setupMessage}</p>}
+  <div className="form-actions">
+   {setup!=='verify'&&setup!=='password'&&<button className="btn" disabled={busy} onClick={()=>showSetup('verify')}>貼上郵件連結</button>}
+   {setup==='verify'&&<button className="btn" disabled={busy} onClick={()=>showSetup('reset')}>申請重設密碼</button>}
+   {setup!=='password'&&<button className="btn" disabled={busy} onClick={()=>showSetup('')}>回登入頁</button>}
+  </div>
  </main>;
- if(!user)return <div className="login-shell"><section className="login-story"><div className="brand"><img className="brand-icon" src={LOGO} alt=""/><div>隘門國小<small>課後活動管理系統</small></div></div><div className="login-head"><span className="eyebrow">放學之後，探索更多可能</span><h1>放學之後，<br/>精彩才正要開始。</h1><p>讓課程安排更清楚，讓行政工作更從容。<br/>一起照顧每一段學習時光。</p></div><div className="illustration"><div className="sun"></div><div className="arch a1"></div><div className="arch a2"></div><div className="arch a3"></div><span className="ill-caption">學習・探索・一起成長</span></div><small>隘門國小課後活動 · 0.7.1</small></section><section className="login-panel"><span className="eyebrow">歡迎回來</span><h2>歡迎回到課後小天地</h2><p className="muted">請使用學校核對過的帳號登入。</p><InstallHelp/><Support/><form onSubmit={async e=>{e.preventDefault();setBusy(true);const f=new FormData(e.currentTarget);try{const auth=await login(f.get('username'),f.get('password'));enter(await getLoginSnapshot(),'live',auth.user.id);}catch(err){notice(err.message,true);}finally{setBusy(false);}}}><label>帳號<input name="username" required autoComplete="username" placeholder="帳號或 Google 電子郵件"/></label><label>密碼<input name="password" type="password" required autoComplete="current-password" placeholder="請輸入密碼"/></label><button className="btn primary full" disabled={!configured||busy}>{busy?'登入中…':'登入系統'}<ArrowUpRight size={18}/></button></form>{googleEnabled&&configured&&<button className="btn full" onClick={()=>supabase.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}})}>使用 Google 帳號登入</button>}{!configured&&<p className="notice">Supabase 尚待完成連線設定。下方可先試用四種角色；試用資料不會寫入正式資料庫。</p>}<div className="demo-box"><span className="eyebrow">角色體驗 · 假資料</span><p>先看看不同身分的工作畫面</p><div className="demo-buttons">{Object.entries(ROLE_NAMES).map(([id,label])=><button key={id} onClick={()=>{const d=loadDemo();enter(d,'demo',id);}}><span>{label}</span><small>{id}</small><ArrowUpRight size={15}/></button>)}</div><small>無須密碼 · 僅限流程體驗 · 請勿輸入真實個資</small></div></section>{toast&&<div className={'toast '+(toast.error?'error':'')} role="alert">{toast.message}</div>}</div>;
+ if(!user)return <div className="login-shell"><section className="login-story"><div className="brand"><img className="brand-icon" src={LOGO} alt=""/><div>隘門國小<small>課後活動管理系統</small></div></div><div className="login-head"><span className="eyebrow">放學之後，探索更多可能</span><h1>放學之後，<br/>精彩才正要開始。</h1><p>讓課程安排更清楚，讓行政工作更從容。<br/>一起照顧每一段學習時光。</p></div><div className="illustration"><div className="sun"></div><div className="arch a1"></div><div className="arch a2"></div><div className="arch a3"></div><span className="ill-caption">學習・探索・一起成長</span></div><small>隘門國小課後活動 · 0.7.2</small></section><section className="login-panel"><span className="eyebrow">歡迎回來</span><h2>歡迎回到課後小天地</h2><p className="muted">請使用學校核對過的帳號登入。</p><InstallHelp/><Support/><form onSubmit={async e=>{e.preventDefault();setBusy(true);const f=new FormData(e.currentTarget);try{const auth=await login(f.get('username'),f.get('password'));enter(await getLoginSnapshot(),'live',auth.user.id);}catch(err){notice(err.message,true);}finally{setBusy(false);}}}><label>帳號<input name="username" required autoComplete="username" placeholder="帳號或 Google 電子郵件"/></label><label>密碼<input name="password" type="password" required autoComplete="current-password" placeholder="請輸入密碼"/></label><button className="btn primary full" disabled={!configured||busy}>{busy?'登入中…':'登入系統'}<ArrowUpRight size={18}/></button></form>{configured&&<div className="form-actions"><button className="btn small" onClick={()=>showSetup('verify')}>驗證邀請連結</button><button className="btn small" onClick={()=>showSetup('reset')}>忘記或尚未設定密碼</button></div>}{googleEnabled&&configured&&<button className="btn full" onClick={()=>supabase.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}})}>使用 Google 帳號登入</button>}{!configured&&<p className="notice">Supabase 尚待完成連線設定。下方可先試用四種角色；試用資料不會寫入正式資料庫。</p>}<div className="demo-box"><span className="eyebrow">角色體驗 · 假資料</span><p>先看看不同身分的工作畫面</p><div className="demo-buttons">{Object.entries(ROLE_NAMES).map(([id,label])=><button key={id} onClick={()=>{const d=loadDemo();enter(d,'demo',id);}}><span>{label}</span><small>{id}</small><ArrowUpRight size={15}/></button>)}</div><small>無須密碼 · 僅限流程體驗 · 請勿輸入真實個資</small></div></section>{toast&&<div className={'toast '+(toast.error?'error':'')} role="alert">{toast.message}</div>}</div>;
  const admin=has(user,'admin'),teacher=has(user,'clubtr')||has(user,'hrtr');
  const family=has(user,'guardian');
  const canView=id=>family?['home','roster','leave'].includes(id):!(['billing','permissions','settings'].includes(id)&&!admin)&&!(id==='attendance'&&!admin&&!teacher)&&!(id==='changes'&&!admin&&!has(user,'clubtr'));

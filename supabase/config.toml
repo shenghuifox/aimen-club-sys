@@ -4,3 +4,15 @@ schema_paths = ["./schemas/*.sql"]
 
 [functions.club-account-admin]
 verify_jwt = true
+
+[auth]
+site_url = "https://shenghuifox.github.io/aimen-club-sys/"
+additional_redirect_urls = ["https://shenghuifox.github.io/aimen-club-sys/"]
+
+[auth.email.template.invite]
+subject = "隘門國小課後活動系統｜帳號邀請"
+content_path = "./supabase/templates/invite.html"
+
+[auth.email.template.recovery]
+subject = "隘門國小課後活動系統｜重設密碼"
+content_path = "./supabase/templates/recovery.html"
