@@ -47,3 +47,45 @@
 
 .entry-roles{display:flex;gap:8px;margin:12px 0 18px}.entry-roles button{flex:1;justify-content:center;min-height:44px}
 .calendar-embed{padding:10px;margin:auto;max-width:780px}.calendar-embed .public-calendar{margin:auto}
+
+/* Keep the roster and sign-in controls usable on narrow touch screens. */
+.attendance-panel .session-summary {
+ display:grid;
+ grid-template-columns:minmax(0,1fr) auto;
+ align-items:center;
+ gap:8px;
+}
+.session-details {
+ display:grid;
+ gap:4px;
+}
+.session-details span {
+ min-width:0;
+ white-space:nowrap;
+ overflow:hidden;
+ text-overflow:ellipsis;
+}
+.attendance-table {
+ table-layout:fixed;
+}
+.attendance-table th:nth-child(n+2) {
+ width:28%;
+}
+.attendance-table td:first-child {
+ overflow:hidden;
+ text-overflow:ellipsis;
+ white-space:nowrap;
+}
+.attendance-table select {
+ width:100%;
+}
+@media(max-width:900px) {
+ .attendance-panel .session-summary {padding:10px}
+ .attendance-panel .btn {padding-inline:9px;white-space:nowrap}
+ .attendance-panel label>select,.attendance-panel textarea,.attendance-table select {font-size:16px}
+ .attendance-panel label>select,.attendance-table select {min-height:44px}
+ .attendance-table th,.attendance-table td {padding:6px 4px}
+ .attendance-table td {font-size:14px}
+ .attendance-table .badge {padding-inline:3px}
+ .attendance-table select {padding-inline:4px}
+}
