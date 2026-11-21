@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 const db=new PGlite();
 await db.exec(`
  create role anon; create role authenticated; create role service_role; create schema auth;
- create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,deleted_at timestamptz,banned_until timestamptz);
+ create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz,deleted_at timestamptz,banned_until timestamptz,raw_app_meta_data jsonb default '{}'::jsonb);
+ create table auth.sessions(id uuid primary key,user_id uuid,created_at timestamptz);
+ create function auth.jwt() returns jsonb language sql stable as $ select coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb $;
  create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
  grant usage on schema auth to authenticated; grant execute on function auth.uid() to authenticated;
 `);
@@ -16,6 +18,7 @@ await db.exec(await fs.readFile(new URL('../supabase/schemas/005_club_operations
 await db.exec(await fs.readFile(new URL('../supabase/schemas/006_operations_handover.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../supabase/schemas/007_requests_and_accounts.sql',import.meta.url),'utf8'));
 await db.exec(await fs.readFile(new URL('../supabase/schemas/008_single_admin_invites.sql',import.meta.url),'utf8'));
+await db.exec(await fs.readFile(new URL('../supabase/schemas/009_school_username_login.sql',import.meta.url),'utf8'));
 const ids={admin:'00000000-0000-0000-0000-000000000001',stu:'00000000-0000-0000-0000-000000000002',clubtr:'00000000-0000-0000-0000-000000000003',hrtr:'00000000-0000-0000-0000-000000000004',other:'00000000-0000-0000-0000-000000000005'};
 for(const [role,id] of Object.entries(ids)){await db.query('insert into auth.users(id,email,email_confirmed_at) values($1,$2,now())',[id,role+'@test.aimen.invalid']);await db.query('insert into club_private.users(id,username,name,roles) values($1,$2,$2,$3)',[id,role,[role==='other'?'stu':role]]);}
 const as=async(role)=>{await db.exec('reset role');await db.query("select set_config('request.jwt.claim.sub',$1,false)",[ids[role]||'']);await db.exec('set role '+(role==='anon'?'anon':'authenticated'));};
@@ -361,5 +364,64 @@ await check('行政可單筆邀請管理員，未驗證及一般帳號不能取�
  assert.equal((await invite('clubtr@test.aimen.invalid')).bound,1);
  assert.deepEqual((await snapshot()).users.find(u=>u.id===ids.clubtr).roles,['clubtr','admin']);
  await assert.rejects(()=>invite('guardian@example.com'));
+});
+const registerSchool=payload=>db.query('select public.club_register_school_account($1)',[payload]);
+const changeRequired=async()=>(await db.query('select public.club_school_password_required() value')).rows[0].value;
+const confirmSchoolPassword=id=>db.query('select public.club_complete_school_password($1)',[id]);
+await check('新校用帳號限行政核發，行政、導師及社團老師首次登入須換密碼',async()=>{
+ for(const [index,role] of ['admin','hrtr','clubtr'].entries()){
+  const username='schoolstaff'+index,id='10000000-0000-0000-0000-00000000000'+index;
+  ids[username]=id;
+  const staff={id,username,name:'新進教師',role};
+  await db.exec('reset role');
+  await db.query('insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data) values($1,$2,now(),$3)',
+   [id,username+'@accounts.aimen.invalid',{aimen_issued_by:ids.admin}]);
+  await as('anon');await assert.rejects(()=>registerSchool(staff),/permission denied/);await assert.rejects(changeRequired,/permission denied/);
+  await as('stu');await assert.rejects(()=>registerSchool(staff),/僅行政/);
+  await as('newManager');await assert.rejects(()=>registerSchool(staff),/帳號服務/);
+  await as('admin');await registerSchool(staff);
+  await as(username);
+  assert.equal(await changeRequired(),true);
+  await assert.rejects(snapshot,/首次登入/);
+  await assert.rejects(()=>act('add_student',{}),/首次登入/);
+  await assert.rejects(()=>confirmSchoolPassword(id),/permission denied/);
+  const before='20000000-0000-0000-0000-00000000000'+index;
+  const after='30000000-0000-0000-0000-00000000000'+index;
+  await db.exec('reset role');
+  await db.query('insert into auth.sessions values($1,$2,clock_timestamp())',[before,id]);
+  await db.exec('set role service_role');await confirmSchoolPassword(id);
+  await as(username);
+  await db.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({session_id:before})]);
+  assert.equal(await changeRequired(),false);
+  await assert.rejects(snapshot,/重新登入/);
+  await db.exec('reset role');
+  await db.query('insert into auth.sessions values($1,$2,clock_timestamp())',[after,id]);
+  await as(username);
+  await db.query("select set_config('request.jwt.claims',$1,false)",[JSON.stringify({session_id:after})]);
+  assert.deepEqual((await snapshot()).users.find(u=>u.id===id).roles,[role]);
+ }
+});
+await check('新學生及家長可直接登入，只能查看綁定的學生資料',async()=>{
+ await as('admin');
+ await act('add_student',{term_id:term,name:'新學生',class_name:'六甲',number:'99'});
+ const pupil=(await snapshot()).students.find(s=>s.name==='新學生').id;
+ for(const [index,role] of ['stu','guardian'].entries()){
+  const username='family'+index,id='40000000-0000-0000-0000-00000000000'+index;
+  ids[username]=id;
+  await db.exec('reset role');
+  await db.query('insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data) values($1,$2,now(),$3)',
+   [id,username+'@accounts.aimen.invalid',{aimen_issued_by:ids.admin}]);
+  await as('admin');
+  await registerSchool({id,username,name:'受邀家庭',role,student_id:pupil});
+  await assert.rejects(()=>follow('edit_account',{id,username:'replacement',name:'變更',roles:[role]}));
+  await as(username);
+  assert.equal(await changeRequired(),false);
+  assert.deepEqual((await snapshot()).students.map(s=>s.id),[pupil]);
+ }
+ await as('admin');
+ await follow('edit_account',{id:ids.family0,username:'family0',name:'升級角色',roles:['stu','hrtr']});
+ await as('family0');
+ assert.equal(await changeRequired(),true);
+ await assert.rejects(snapshot,/首次登入/);
 });
 await db.close();console.log(`${count} database security scenarios passed`);

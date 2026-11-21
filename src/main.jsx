@@ -3,7 +3,8 @@ import {readAuthCallback,parseSetupLink} from './auth-callback.js';
 import {createRoot} from 'react-dom/client';
 import {LayoutDashboard,CalendarDays,BookOpen,Users,ClipboardCheck,FileCheck2,ArrowLeftRight,Wallet,ShieldCheck,Settings,Menu,LogOut,ChevronLeft,ChevronRight,ArrowUpRight,Plus,Search,Download,Bell,Check,Clock,Leaf,X,GraduationCap,RefreshCw} from 'lucide-react';
 import {ROLE_NAMES,STATUS_NAMES,FEE_NAMES,SCHEDULE_NAMES,has,dateKey,addDays,weekDays,timeText,stamp,money,enrolledOn,settlementPreview} from './domain.js';
-import {configured,authProjectUrl,googleEnabled,supabase,loadDemo,resetDemo,getLoginSnapshot,getSnapshot,runAction,login} from './api.js';
+import {isInitialPassword,isSchoolAccount,validSchoolPassword} from '../supabase/functions/club-account-admin/school-auth.js';
+import {configured,authProjectUrl,googleEnabled,supabase,loadDemo,resetDemo,getLoginSnapshot,getSnapshot,runAction,login,schoolPasswordRequired,callAccountService} from './api.js';
 import {downloadCsv,downloadPayroll,printReport} from './reports.js';
 import {FIRST_HOUR,LAST_HOUR,dayEvents} from './calendar.js';
 import './style.css';
@@ -71,7 +72,7 @@ function App(){
  const [setupUser,setSetupUser]=useState(null);
  const [setupMessage,setSetupMessage]=useState(authCallback?.invalid?'連結已失效，請貼上尚未使用的邀請連結或申請重設密碼。':'');
  const [recurring,setRecurring]=useState(false),[changeHistory,setChangeHistory]=useState(null);
- const [accountImport,setAccountImport]=useState(false);
+ const [accountImport,setAccountImport]=useState(false),[issued,setIssued]=useState(null);
  const [mode,setMode]=useState(null),[data,setData]=useState(null),[user,setUser]=useState(null),[page,setPage]=useState('home'),[term,setTerm]=useState(''),[menu,setMenu]=useState(false),[modal,setModal]=useState(null),[busy,setBusy]=useState(false),[toast,setToast]=useState(null),[week,setWeek]=useState(dateKey()),[search,setSearch]=useState(''),[billClub,setBillClub]=useState(''),[billStart,setBillStart]=useState(addDays(weekDays(dateKey())[0],-7)),[billEnd,setBillEnd]=useState(addDays(weekDays(dateKey())[0],-1)),[preview,setPreview]=useState(null),[chosenSession,setChosenSession]=useState(''),[marks,setMarks]=useState({}),[summary,setSummary]=useState('');
  const notice=(message,error=false)=>{setToast({message,error});};
  useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(null),6500);return()=>clearTimeout(t);},[toast]);
@@ -81,8 +82,7 @@ function App(){
   supabase.auth.getSession().then(async({data:{session}})=>{
    if(!active||!session)return;
    try {
-    const snapshot=await getLoginSnapshot();
-    if(active)enter(snapshot,'live',session.user.id);
+    await enterSignedIn(session.user.id,()=>active);
    }catch(error){if(active)notice(error.message,true);}
   });
   return ()=>{active=false;};
@@ -120,10 +120,25 @@ function App(){
   return ()=>{current=false;document.removeEventListener('visibilitychange',refresh);};
  },[mode,user?.id]);
  const enter=(d,m,id)=>{const u=d.users.find(x=>x.id===id);if(!u)throw Error('帳號尚未獲授權，請聯絡學校管理者。');setData(d);setUser(u);setMode(m);setTerm(d.terms[0]?.id||'');setBillClub(d.clubs[0]?.id||'');};
+ async function enterSignedIn(id,isCurrent=()=>true){
+  if(await schoolPasswordRequired()){
+   if(isCurrent()){setSetupUser(id);setSetupMessage('');setSetup('school-password');}
+   return;
+  }
+  const snapshot=await getLoginSnapshot();
+  if(isCurrent())enter(snapshot,'live',id);
+ }
  const action=async(a,p)=>{
   setBusy(true);
   try {
-   const {snapshot,result}=await runAction(mode,data,user,a,p);
+   const response=await runAction(mode,data,user,a,p);
+   const {result}=response;
+   let {snapshot}=response;
+   if(result?.initial_password){
+    setIssued(result);
+    setModal(null);
+    snapshot=await getSnapshot();
+   }
    setData(snapshot);
    setUser(snapshot.users.find(u=>u.id===user.id)||user);
    setModal(null);
@@ -148,7 +163,7 @@ function App(){
  };
  const openForm=(title,fields,values,submit,note,button)=>setModal({title,fields,values,submit,note,button});
  const jump=p=>{setPage(p);setMenu(false);setSearch('');setPreview(null);};
- const logout=async()=>{setMode(null);setUser(null);setData(null);setPage('home');if(mode==='live')await supabase.auth.signOut({scope:'local'});};
+ const logout=async()=>{setIssued(null);setMode(null);setUser(null);setData(null);setPage('home');if(mode==='live')await supabase.auth.signOut({scope:'local'});};
  async function verifySetup(event){
   event.preventDefault();
   const proof=setupProof||parseSetupLink(String(new FormData(event.currentTarget).get('link')||''),authProjectUrl,siteUrl);
@@ -168,12 +183,19 @@ function App(){
   event.preventDefault();setBusy(true);setSetupMessage('');
   try {
    const form=new FormData(event.currentTarget),password=String(form.get('password')||'');
-   if(password!==form.get('confirm')||password.length<12||new TextEncoder().encode(password).length>72)
-    throw Error('請確認兩次密碼相同，至少 12 字元，且不超過 72 個位元組。');
+   if(password!==form.get('confirm')||!validSchoolPassword(password))
+    throw Error('請確認兩次密碼相同，至少 8 字元，包含英文字母及數字，且最多 72 位元組。');
    const {data:{session}}=await supabase.auth.getSession();
    if(!setupUser||session?.user.id!==setupUser)throw Error('驗證工作階段已變更，請重新開啟或重設連結。');
-   const {error}=await supabase.auth.updateUser({password});
-   if(error)throw Error('無法儲存密碼，請重新驗證或聯絡學校。');
+   if(setup==='school-password'){
+    if(isInitialPassword(password))throw Error('請選擇不同於校方提供的初始密碼。');
+    await callAccountService({action:'complete_setup',password});
+    await supabase.auth.signOut({scope:'local'});
+    notice('密碼已更新，請用新密碼登入。');
+   }else{
+    const {error}=await supabase.auth.updateUser({password});
+    if(error)throw Error('無法儲存密碼，請重新驗證或聯絡學校。');
+   }
    setSetupUser(null);setSetup('');
   }catch(error){setSetupMessage(error.message);}
   finally{setBusy(false);}
@@ -190,7 +212,7 @@ function App(){
  }
  function showSetup(next){setSetupProof(null);setSetupMessage('');setSetup(next);}
  if(setup)return <main className="login-panel">
-  <h1>{setup==='password'?'設定登入密碼':setup==='reset'?'申請重設密碼':'驗證邀請或重設連結'}</h1><Support/>
+  <h1>{setup==='school-password'?'首次登入，請更改密碼':setup==='password'?'設定登入密碼':setup==='reset'?'申請重設密碼':'驗證邀請或重設連結'}</h1><Support/>
   {setup==='verify'&&<form onSubmit={verifySetup}>
    {setupProof?<p>按下驗證後，即可設定登入密碼。</p>:<label>郵件中的完整連結<input name="link" type="url" autoComplete="off" required/></label>}
    <button className="btn primary" disabled={!configured||busy}>驗證連結</button>
@@ -199,19 +221,20 @@ function App(){
    <label>登入電子郵件<input type="email" name="email" required autoComplete="email"/></label>
    <button className="btn primary" disabled={!configured||busy}>寄送重設郵件</button>
   </form>}
-  {setup==='password'&&<form onSubmit={saveSetupPassword}>
-   <label>新密碼（至少 12 字元）<input type="password" name="password" required minLength={12} autoComplete="new-password"/></label>
-   <label>再輸入一次<input type="password" name="confirm" required minLength={12} autoComplete="new-password"/></label>
-   <button className="btn primary" disabled={!configured||busy}>儲存密碼並登入</button>
+  {['password','school-password'].includes(setup)&&<form onSubmit={saveSetupPassword}>
+   <label>新密碼（至少 8 字元，含英文字母及數字）<input type="password" name="password" required minLength={8} autoComplete="new-password"/></label>
+   <label>再輸入一次<input type="password" name="confirm" required minLength={8} autoComplete="new-password"/></label>
+   <button className="btn primary" disabled={!configured||busy}>{setup==='school-password'?'儲存新密碼':'儲存密碼並登入'}</button>
   </form>}
   {setupMessage&&<p role="status">{setupMessage}</p>}
   <div className="form-actions">
-   {setup!=='verify'&&setup!=='password'&&<button className="btn" disabled={busy} onClick={()=>showSetup('verify')}>貼上郵件連結</button>}
+   {setup==='reset'&&<button className="btn" disabled={busy} onClick={()=>showSetup('verify')}>貼上郵件連結</button>}
    {setup==='verify'&&<button className="btn" disabled={busy} onClick={()=>showSetup('reset')}>申請重設密碼</button>}
-   {setup!=='password'&&<button className="btn" disabled={busy} onClick={()=>showSetup('')}>回登入頁</button>}
+   {['verify','reset'].includes(setup)&&<button className="btn" disabled={busy} onClick={()=>showSetup('')}>回登入頁</button>}
+   {setup==='school-password'&&<button className="btn" disabled={busy} onClick={async()=>{await supabase.auth.signOut({scope:'local'});setSetupUser(null);showSetup('');}}>登出</button>}
   </div>
  </main>;
- if(!user)return <div className="login-shell"><section className="login-story"><div className="brand"><img className="brand-icon" src={LOGO} alt=""/><div>隘門國小<small>課後活動管理系統</small></div></div><div className="login-head"><span className="eyebrow">放學之後，探索更多可能</span><h1>放學之後，<br/>精彩才正要開始。</h1><p>讓課程安排更清楚，讓行政工作更從容。<br/>一起照顧每一段學習時光。</p></div><div className="illustration"><div className="sun"></div><div className="arch a1"></div><div className="arch a2"></div><div className="arch a3"></div><span className="ill-caption">學習・探索・一起成長</span></div><small>隘門國小課後活動 · 0.7.2</small></section><section className="login-panel"><span className="eyebrow">歡迎回來</span><h2>歡迎回到課後小天地</h2><p className="muted">請使用學校核對過的帳號登入。</p><InstallHelp/><Support/><form onSubmit={async e=>{e.preventDefault();setBusy(true);const f=new FormData(e.currentTarget);try{const auth=await login(f.get('username'),f.get('password'));enter(await getLoginSnapshot(),'live',auth.user.id);}catch(err){notice(err.message,true);}finally{setBusy(false);}}}><label>帳號<input name="username" required autoComplete="username" placeholder="帳號或 Google 電子郵件"/></label><label>密碼<input name="password" type="password" required autoComplete="current-password" placeholder="請輸入密碼"/></label><button className="btn primary full" disabled={!configured||busy}>{busy?'登入中…':'登入系統'}<ArrowUpRight size={18}/></button></form>{configured&&<div className="form-actions"><button className="btn small" onClick={()=>showSetup('verify')}>驗證邀請連結</button><button className="btn small" onClick={()=>showSetup('reset')}>忘記或尚未設定密碼</button></div>}{googleEnabled&&configured&&<button className="btn full" onClick={()=>supabase.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}})}>使用 Google 帳號登入</button>}{!configured&&<p className="notice">Supabase 尚待完成連線設定。下方可先試用四種角色；試用資料不會寫入正式資料庫。</p>}<div className="demo-box"><span className="eyebrow">角色體驗 · 假資料</span><p>先看看不同身分的工作畫面</p><div className="demo-buttons">{Object.entries(ROLE_NAMES).map(([id,label])=><button key={id} onClick={()=>{const d=loadDemo();enter(d,'demo',id);}}><span>{label}</span><small>{id}</small><ArrowUpRight size={15}/></button>)}</div><small>無須密碼 · 僅限流程體驗 · 請勿輸入真實個資</small></div></section>{toast&&<div className={'toast '+(toast.error?'error':'')} role="alert">{toast.message}</div>}</div>;
+ if(!user)return <div className="login-shell"><section className="login-story"><div className="brand"><img className="brand-icon" src={LOGO} alt=""/><div>隘門國小<small>課後活動管理系統</small></div></div><div className="login-head"><span className="eyebrow">放學之後，探索更多可能</span><h1>放學之後，<br/>精彩才正要開始。</h1><p>讓課程安排更清楚，讓行政工作更從容。<br/>一起照顧每一段學習時光。</p></div><div className="illustration"><div className="sun"></div><div className="arch a1"></div><div className="arch a2"></div><div className="arch a3"></div><span className="ill-caption">學習・探索・一起成長</span></div><small>隘門國小課後活動 · 0.8.0</small></section><section className="login-panel"><span className="eyebrow">歡迎回來</span><h2>歡迎回到課後小天地</h2><p className="muted">請輸入學校發給你的帳號與密碼。忘記密碼請聯絡教導處。</p><InstallHelp/><Support/><form onSubmit={async e=>{e.preventDefault();setBusy(true);const f=new FormData(e.currentTarget);try{const auth=await login(f.get('username'),f.get('password'));await enterSignedIn(auth.user.id);}catch(err){notice(err.message,true);}finally{setBusy(false);}}}><label>帳號<input name="username" required autoComplete="username" autoCapitalize="none" placeholder="請輸入學校帳號"/></label><label>密碼<input name="password" type="password" required autoComplete="current-password" placeholder="請輸入密碼"/></label><button className="btn primary full" disabled={!configured||busy}>{busy?'登入中…':'登入系統'}<ArrowUpRight size={18}/></button></form>{configured&&<div className="form-actions"><button className="btn small" onClick={()=>showSetup('verify')}>驗證邀請連結</button><button className="btn small" onClick={()=>showSetup('reset')}>舊帳號郵件重設</button></div>}{googleEnabled&&configured&&<button className="btn full" onClick={()=>supabase.auth.signInWithOAuth({provider:'google',options:{redirectTo:location.origin+location.pathname}})}>使用 Google 帳號登入</button>}{!configured&&<p className="notice">Supabase 尚待完成連線設定。下方可先試用四種角色；試用資料不會寫入正式資料庫。</p>}<div className="demo-box"><span className="eyebrow">角色體驗 · 假資料</span><p>先看看不同身分的工作畫面</p><div className="demo-buttons">{Object.entries(ROLE_NAMES).map(([id,label])=><button key={id} onClick={()=>{const d=loadDemo();enter(d,'demo',id);}}><span>{label}</span><small>{id}</small><ArrowUpRight size={15}/></button>)}</div><small>無須密碼 · 僅限流程體驗 · 請勿輸入真實個資</small></div></section>{toast&&<div className={'toast '+(toast.error?'error':'')} role="alert">{toast.message}</div>}</div>;
  const admin=has(user,'admin'),teacher=has(user,'clubtr')||has(user,'hrtr');
  const family=has(user,'guardian');
  const canView=id=>family?['home','roster','leave'].includes(id):!(['billing','permissions','settings'].includes(id)&&!admin)&&!(id==='attendance'&&!admin&&!teacher)&&!(id==='changes'&&!admin&&!has(user,'clubtr'));
@@ -240,33 +263,33 @@ function App(){
  const canWithdrawChange=c=>c.status==='pending'&&(admin||has(user,'clubtr')&&c.created_by===user.id&&clubs.some(club=>club.id===c.club_id&&club.teacher_id===user.id));
  const confirmWithdraw=(label,kind,id)=>openForm(label,[],{},()=>action(kind,{id}),
   '撤回後仍會保留紀錄。請確認後送出。','確認撤回');
- function inviteAccount(){
-  openForm('新增帳號',[field('email','登入電子郵件','email'),field('name','姓名'),
-   field('role','角色','select',Object.entries(ROLE_NAMES).filter(([value])=>value!=='guardian').map(([value,label])=>({value,label}))),
-   {...field('class_name','學生班級','text'),required:false},{...field('number','學生座號','text'),required:false}],
+ function createSchoolAccount(){
+  openForm('新增校用帳號',[field('username','登入帳號'),field('name','姓名'),
+   field('role','角色','select',Object.entries(ROLE_NAMES).map(([value,label])=>({value,label}))),
+   {...field('student_id','綁定學生（家長與學生帳號必填）','select',studentOpts),required:false}],
    {},p=>{
-    if(p.role==='admin'&&!confirm('確定將行政管理權授予此電子郵件的持有人？'))return;
-    return action(mode==='demo'?'import_accounts':'account_credentials',mode==='demo'
-     ?{term_id:term||null,rows:[p]}:{...p,action:'invite',term_id:term||null});
+    if(p.role==='admin'&&!confirm('確定授予此帳號行政管理權？'))return;
+    return action('account_credentials',{...p,action:'create_school'});
    },
-   '學生帳號請填班級、座號與姓名。行政管理員請使用經校方核對的電子郵件，家長請從學生名冊綁定。','新增並寄出邀請');
+   '帳號限 2 至 40 字元，可使用英數字、底線及連字號，並以英數字開頭。初始密碼只顯示一次，請直接交付帳號持有人。','建立帳號');
  }
  function accountProfile(u){
   const student=students.find(s=>s.user_id===u.id);
   const roleOpts=Object.entries(ROLE_NAMES).filter(([v])=>v!=='guardian').map(([value,label])=>({value,label}));
-  const fields=[field('username','系統帳號名稱'),field('name','姓名')];
+  const school=isSchoolAccount(u.email);
+  const fields=school?[field('name','姓名')]:[field('username','系統帳號名稱'),field('name','姓名')];
   if(!has(u,'guardian')) fields.push(field('roles','角色與權限','roles',roleOpts));
   if(student) fields.push({...field('student_number','學號（目前學期）'),required:false});
   fields.push({...field('notes','備註（僅行政可見）','textarea'),required:false});
   openForm('編修 '+u.name,fields,{...u,student_number:student?.student_number||''},
    p=>action('edit_account',{id:u.id,term_id:term||null,username:p.username,name:p.name,roles:p.roles,notes:p.notes,student_number:p.student_number}),
-   '實際登入使用電子郵件。這裡的系統帳號名稱供行政辨識。');
+   school?'校用登入帳號為 '+u.username+'。':'這裡的系統帳號名稱供行政辨識。');
  }
  function credentials(u,kind){
   const email=kind==='email';
   openForm((email?'修改登入電子郵件 ':'重設臨時密碼 ')+u.name,
    email?[field('email','新登入電子郵件','email'),field('confirmed','持有人已核對','select',[{value:'yes',label:'學校已核對新地址為同一人所有'}])]:
-    [field('password','新臨時密碼（至少 12 字元）','password')],{},
+    [field('password','新密碼（至少 8 字元，含英文字母及數字）','password')],{},
    p=>action('account_credentials',{...p,action:kind,id:u.id,confirmed:p.confirmed==='yes'}),
    email?'更新後請用新電子郵件登入。':'請當面或透過校方安全管道交付臨時密碼。','確認更新');
  }
@@ -378,11 +401,11 @@ function App(){
  {page==='attendance'&&<section className="panel"><div className="panel-head"><h2>課程紀錄與點名</h2>{admin&&<button className="btn" onClick={addSession}><Plus size={16}/>新增節次</button>}</div><label>選擇課程<select value={chosenSession} onChange={e=>selectSession(e.target.value)}><option value="">請選擇上課節次</option>{mySessions.filter(s=>s.status!=='cancelled').map(s=><option key={s.id} value={s.id}>{dateKey(new Date(s.starts_at))} {timeText(s.starts_at)} {clubName(s.club_id)} · {STATUS_NAMES[s.status]}</option>)}</select></label>{currentSession&&currentSession.status!=='cancelled'&&<><div className="session-summary"><span>{userName(currentSession.teacher_id)} · {currentSession.units} 節</span><span>線上簽到：{currentSession.signed_at?stamp(currentSession.signed_at):'尚未簽到'}</span><button className="btn" disabled={busy||!!currentSession.signed_at||!mayMakeUp} onClick={()=>action('sign_in',{session_id:currentSession.id})}><Check size={16}/>{lessonDate===dateKey()?'教師簽到':'補登簽到'}</button></div><label>當節課程摘要<textarea value={summary} onChange={e=>setSummary(e.target.value)} placeholder="記錄本次授課內容…"/></label><p className="notice">出席為預填值，請逐一核對後再確認。未確認的請假申請不會自動算作請假。</p><div className="table-wrap"><table><thead><tr><th>學生</th><th>請假提醒</th><th>出缺席</th></tr></thead><tbody>{roster.map(s=>{const l=leaves.find(l=>l.session_id===currentSession.id&&l.student_id===s.id&&['pending','approved'].includes(l.status));return <tr key={s.id}><td>{s.class_name} {s.name}</td><td>{l?<><Badge value={l.status}/> {l.kind}</>:'—'}</td><td><select aria-label={s.name+'出缺席'} disabled={l?.status==='approved'} value={l?.status==='approved'?'leave':(marks[s.id]==='leave'?'':marks[s.id])||'present'} onChange={e=>setMarks({...marks,[s.id]:e.target.value})}>{['present','absent','late',...(l?.status==='approved'?['leave']:[])].map(v=><option key={v} value={v}>{STATUS_NAMES[v]}</option>)}</select></td></tr>;})}</tbody></table></div><div className="form-actions"><button className="btn primary" disabled={busy||!mayMakeUp||!currentSession.signed_at||!summary.trim()||new Date(currentSession.starts_at)>new Date()} onClick={()=>action('attendance',{session_id:currentSession.id,summary,marks:Object.fromEntries(Object.entries(marks).map(([id,mark])=>[id,mark==='leave'?'present':mark]))})}>{lessonDate===dateKey()?'儲存摘要並確認點名':'儲存補點紀錄'}</button></div></>}</section>}
  {page==='changes'&&<section className="panel"><div className="panel-head"><div><h2>社團異動紀錄</h2><p>學生增退、代課、停補課與雙向調課</p></div><div className="form-actions">{admin&&Object.entries(SCHEDULE_NAMES).map(([kind,label])=><button key={kind} className="btn" disabled={busy} onClick={()=>scheduleOperation(kind)}>{label}</button>)}<button className="btn primary" onClick={addChange}><Plus size={16}/>新增異動</button></div></div>{changes.length?<div className="table-wrap"><table><thead><tr><th>社團</th><th>類型／原因</th><th>生效日期或新時間</th><th>狀態</th><th>操作</th></tr></thead><tbody>{changes.map(c=><tr key={c.id}><td>{clubName(c.club_id)}</td><td>{{add_student:'學生加入',remove_student:'學生退出',reschedule:'代課／調課',weekly:'每週安排調整',...SCHEDULE_NAMES}[c.kind]}<small>{c.reason}</small></td><td>{['add_student','remove_student'].includes(c.kind)?c.effective_date:stamp(c.starts_at)}</td><td><Badge value={c.status} label={c.status==='withdrawn'?'已撤回':undefined}/>{c.supersedes_id&&<small>修訂版本</small>}{changes.some(n=>n.supersedes_id===c.id&&['pending','approved'].includes(n.status))&&<small>已有後續修訂</small>}</td><td>{canWithdrawChange(c)&&<button className="btn small" disabled={busy} onClick={()=>confirmWithdraw('撤回異動','withdraw_change',c.id)}>撤回異動</button>}{c.status!=='withdrawn'&&!SCHEDULE_NAMES[c.kind]&&(admin||(c.created_by===user.id&&clubs.find(x=>x.id===c.club_id)?.teacher_id===user.id))&&!changes.some(n=>n.supersedes_id===c.id&&['pending','approved'].includes(n.status))&&<button className="btn small" disabled={busy} onClick={()=>editChange(c)}>編修</button>} {(c.edit_history?.length>0)&&<button className="btn small" onClick={()=>setChangeHistory(c)}>編修紀錄</button>} {admin&&c.status==='pending'&&<><button className="btn small" disabled={busy} onClick={()=>action('review_change',{id:c.id,status:'approved'})}>確認生效</button> <button className="btn small" disabled={busy} onClick={()=>action('review_change',{id:c.id,status:'rejected'})}>不通過</button></>}</td></tr>)}</tbody></table></div>:<Empty>尚無異動紀錄，原有課程照常進行。</Empty>}</section>}
  {page==='billing'&&admin&&<><section className="panel"><div className="panel-head"><div><h2>分期核算鐘點費</h2><p>先選社團與期間，核對後再產出並鎖定</p></div><button className="btn" disabled={!clubs.length} onClick={exportActivity}>匯出活動與核銷總表</button></div><div className="billing-filters"><label>核算社團<select value={billClub} onChange={e=>{setBillClub(e.target.value);setPreview(null);}}><option value="">選擇社團</option>{clubs.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>起日<input type="date" value={billStart} onChange={e=>{setBillStart(e.target.value);setPreview(null);}}/></label><label>迄日<input type="date" value={billEnd} onChange={e=>{setBillEnd(e.target.value);setPreview(null);}}/></label><button className="btn primary" onClick={()=>{try{setPreview(settlementPreview(data,billClub,billStart,billEnd));}catch(e){notice(e.message,true);}}}>預覽核算</button></div>{preview&&<div className="billing-preview"><div className="row-between"><h3>本期核算結果</h3><strong className="total">{money(preview.total)}</strong></div><table><thead><tr><th>授課教師</th><th>節數</th><th>單價</th><th>請領金額</th></tr></thead><tbody>{preview.teachers.map((t,i)=><tr key={i}><td>{t.name}</td><td>{t.units}</td><td>{money(t.rate)}</td><td>{money(t.amount)}</td></tr>)}</tbody></table><div className="form-actions"><button className="btn" onClick={()=>printReport(preview,'payroll','預覽',mode==='demo')}>預覽印領清冊</button><button className="btn" onClick={()=>printReport(preview,'sign','預覽',mode==='demo')}>預覽簽到表</button><button className="btn primary" disabled={busy} onClick={async()=>{if(confirm('確認產出並鎖定此社團的選取期間？鎖定後無法直接修改授課紀錄。')){const next=await action('settle',{club_id:billClub,start_date:billStart,end_date:billEnd});if(next)setPreview(null);}}}>確認產出並鎖定</button></div></div>}</section><section className="panel"><h2>已鎖定核銷</h2>{data.settlements.filter(b=>clubs.some(c=>c.id===b.club_id)).length?<div className="table-wrap"><table><thead><tr><th>社團／期間</th><th>金額</th><th>紙本狀態</th><th>文件</th></tr></thead><tbody>{data.settlements.filter(b=>clubs.some(c=>c.id===b.club_id)).map(b=><tr key={b.id}><td><strong>{clubName(b.club_id)}</strong><small>{b.start_date} — {b.end_date}</small></td><td>{money(b.snapshot.total)}<small>已鎖定</small></td><td><button className="btn small" onClick={()=>action('paper_done',{id:b.id})}>{b.paper_done?'紙本已完成':'待紙本簽章'}</button></td><td><button className="btn small" onClick={()=>exportPayroll(b.snapshot)}><Download size={14}/>下載印領清冊 Excel</button> <button className="btn small" onClick={()=>printReport(b.snapshot,'payroll',b.id,mode==='demo')}>列印印領清冊</button> <button className="btn small" onClick={()=>printReport(b.snapshot,'sign',b.id,mode==='demo')}>簽到表</button> {!b.paper_done&&<button className="btn small" disabled={busy} onClick={()=>voidSettlement(b)}>作廢並更正</button>}</td></tr>)}</tbody></table></div>:<Empty>尚無核銷紀錄。試用模式可選足球小將與上一週體驗核銷。</Empty>}<p className="footnote">Excel 依鎖定快照帶入授課與金額明細。印領清冊以 A4 直式列印，簽到表以 A4 橫式列印。</p>{(data.voided_settlements||[]).some(b=>clubs.some(c=>c.id===b.club_id))&&<details><summary>已作廢核銷紀錄</summary>{data.voided_settlements.filter(b=>clubs.some(c=>c.id===b.club_id)).map(b=><p key={b.id}>{clubName(b.club_id)} · {b.start_date} 至 {b.end_date} · {money(b.snapshot.total)}<br/>{stamp(b.voided_at)}　{userName(b.voided_by)}　{b.void_reason}</p>)}</details>}</section></>}
- {page==='permissions'&&admin&&<><section className="panel"><div className="panel-head"><h2>帳號與權限</h2><div className="form-actions"><button className="btn primary" disabled={busy} onClick={inviteAccount}><Plus size={16}/>新增帳號</button><button className="btn" onClick={()=>setAccountImport(true)}><Plus size={16}/>批次匯入帳號</button></div></div>{data.users.filter(u=>u.active!==false&&has(u,'admin')).length<2&&<p className="notice">目前尚未滿兩位管理者。正式啟用前請先完成第二位管理者指派；系統會阻擋移除必要管理者。</p>}<div className="table-wrap"><table><thead><tr><th>帳號</th><th>名稱</th><th>角色</th><th>帳號狀態</th><th>設定</th></tr></thead><tbody>{data.users.map(u=><tr key={u.id}><td>{u.username}{u.email&&<small>{u.email}</small>}</td><td>{u.name}{students.find(s=>s.user_id===u.id)?.student_number&&<small>學號 {students.find(s=>s.user_id===u.id).student_number}</small>}{u.notes&&<small>{u.notes}</small>}</td><td>{u.roles.map(r=><span className="pill" key={r}>{ROLE_NAMES[r]}</span>)}</td><td>{u.active===false?'已停權':'使用中'}</td><td><button className="btn small" disabled={busy} onClick={()=>accountProfile(u)}>編修資料與權限</button> {mode==='live'&&!has(u,'admin')&&<><button className="btn small" disabled={busy} onClick={()=>credentials(u,'email')}>修改登入電子郵件</button> <button className="btn small" disabled={busy} onClick={()=>credentials(u,'password')}>重設密碼</button></>}{u.id!==user.id&&<button className="btn small" disabled={busy} onClick={()=>setAccountStatus(u)}>{u.active===false?'復權':'停權'}</button>}</td></tr>)}</tbody></table></div></section><PendingAccounts entries={data.pending_accounts||[]} students={data.students} terms={data.terms} busy={busy} action={action}/></>}
+ {page==='permissions'&&admin&&<><section className="panel"><div className="panel-head"><h2>帳號與權限</h2><div className="form-actions"><button className="btn primary" disabled={busy||mode==='demo'} onClick={createSchoolAccount}><Plus size={16}/>新增校用帳號</button><button className="btn" onClick={()=>setAccountImport(true)}><Plus size={16}/>批次匯入帳號</button></div></div>{data.users.filter(u=>u.active!==false&&has(u,'admin')).length<2&&<p className="notice">目前尚未滿兩位管理者。正式啟用前請先完成第二位管理者指派；系統會阻擋移除必要管理者。</p>}<div className="table-wrap"><table><thead><tr><th>帳號</th><th>名稱</th><th>角色</th><th>帳號狀態</th><th>設定</th></tr></thead><tbody>{data.users.map(u=><tr key={u.id}><td>{u.username}{u.email&&<small>{isSchoolAccount(u.email)?'校用帳號':u.email}</small>}</td><td>{u.name}{students.find(s=>s.user_id===u.id)?.student_number&&<small>學號 {students.find(s=>s.user_id===u.id).student_number}</small>}{u.notes&&<small>{u.notes}</small>}</td><td>{u.roles.map(r=><span className="pill" key={r}>{ROLE_NAMES[r]}</span>)}</td><td>{u.active===false?'已停權':'使用中'}</td><td><button className="btn small" disabled={busy} onClick={()=>accountProfile(u)}>編修資料與權限</button> {mode==='live'&&!has(u,'admin')&&<>{!isSchoolAccount(u.email)&&<button className="btn small" disabled={busy} onClick={()=>credentials(u,'email')}>修改登入電子郵件</button>} <button className="btn small" disabled={busy} onClick={()=>credentials(u,'password')}>重設密碼</button></>}{u.id!==user.id&&<button className="btn small" disabled={busy} onClick={()=>setAccountStatus(u)}>{u.active===false?'復權':'停權'}</button>}</td></tr>)}</tbody></table></div></section><PendingAccounts entries={data.pending_accounts||[]} students={data.students} terms={data.terms} busy={busy} action={action}/></>}
  {page==='settings'&&admin&&<><section className="panel"><div className="panel-head"><h2>學期管理</h2><button className="btn primary" onClick={()=>openForm('建立新學期',[field('name','學期名稱，例如 115-2'),field('start_date','開始日期','date'),field('end_date','結束日期','date')],{},p=>action('add_term',p))}><Plus size={16}/>新增學期</button></div>{data.terms.map(t=><div className="setting-row" key={t.id}><div><strong>{t.name}</strong><small>{t.start_date} 至 {t.end_date}</small></div><Badge value={t.status==='active'?'進行中':'archived'}/><button className="btn small" disabled={busy} onClick={()=>copyTerm(t)}>複製此學期</button>{t.status==='active'&&<button className="btn small" onClick={()=>{if(confirm('封存後將停止該學期的業務修改，確定封存？'))action('archive_term',{id:t.id});}}>封存學期</button>}</div>)}</section><section className="panel"><h2>連線與版本</h2><div className="setting-row"><span>資料模式</span><strong>{mode==='demo'?'瀏覽器本機試用':'Supabase 雲端'}</strong></div><div className="setting-row"><span>版本</span><strong>0.5.0 試辦版</strong></div><p className="notice">尚未啟用 Email／推播及 Google 登入。正式核銷前請與會計及出納並行驗收。</p></section><section className="panel"><h2>最近操作</h2>{data.audit.slice(0,12).map(a=><div className="setting-row" key={a.id}><span>{a.actor||userName(a.created_by)} · {({leave:'提出請假',review_leave:'覆核請假',enroll:'申請報名',admit:'錄取調整',attendance:'確認點名',sign_in:'教師簽到',change:'提出異動',edit_change:'編修異動',review_change:'覆核異動',settle:'分期核銷',roles:'調整權限',save_club:'建立社團',add_session:'新增節次',publish_club:'切換報名',paper_done:'紙本簽章狀態',add_term:'新增學期',archive_term:'封存學期',add_student:'新增學生',withdraw_leave:'撤回假單',withdraw_change:'撤回異動',edit_account:'編修帳號',copy_term:'複製學期',account_status:'帳號停復權',link_guardian:'綁定家長',prepare_admin_account:'新增行政管理帳號',unlink_guardian:'解除家長綁定',guardian_leave:'家長請假',edit_club:'修改社團',import_accounts:'批次匯入帳號',claim_account:'啟用帳號',cancel_account:'取消待啟用帳號',batch_roster:'批次名單',fee_status:'登記繳費',void_settlement:'作廢核銷',...SCHEDULE_NAMES})[a.action]||'系統操作'}</span><small>{stamp(a.created_at)}{a.detail?.reason?' · '+a.detail.reason:''}</small></div>)}</section></>}
  </main><footer className="app-footer">隘門國小課後活動管理系統 <span>讓每一份用心，都有清楚的紀錄。</span></footer></div>{accountImport&&admin&&<AccountImport term={activeTerm} busy={busy} close={()=>setAccountImport(false)} save={async rows=>{
  const next=await action('import_accounts',{rows,term_id:term||null});
  if(next)setAccountImport(false);
- }}/>}{recurring&&<RecurringModal data={data} clubs={clubs} busy={busy} onClose={()=>setRecurring(false)} onSave={async p=>{const next=await action('batch_sessions',p);if(next)setRecurring(false);}}/>}{changeHistory&&<div className="overlay" onClick={()=>setChangeHistory(null)}><section className="modal" role="dialog" aria-modal="true" aria-label="異動編修紀錄" onClick={e=>e.stopPropagation()}><header><h2>異動編修紀錄</h2><button className="icon-btn" aria-label="關閉紀錄" onClick={()=>setChangeHistory(null)}><X/></button></header><p>目前原因：{changeHistory.reason}</p>{(changeHistory.edit_history||[]).map((h,i)=><div className="panel" key={i}><strong>{stamp(h.edited_at)} · {userName(h.edited_by)}</strong><p className="note">編修前：{h.before.reason}</p>{h.before.starts_at&&<p>原時間：{stamp(h.before.starts_at)} — {stamp(h.before.ends_at)}</p>}{h.before.effective_date&&<p>原生效日：{h.before.effective_date}</p>}<p>原授課教師：{userName(h.before.teacher_id)} · 原節數：{h.before.units??'—'} · 原費率：{h.before.rate??'—'}</p></div>)}</section></div>}{modal&&<FormModal key={modal.title} spec={modal} close={()=>!busy&&setModal(null)} busy={busy}/>} {toast&&<div className={'toast '+(toast.error?'error':'')} role="alert">{toast.message}</div>}</div>;
+ }}/>}{recurring&&<RecurringModal data={data} clubs={clubs} busy={busy} onClose={()=>setRecurring(false)} onSave={async p=>{const next=await action('batch_sessions',p);if(next)setRecurring(false);}}/>}{changeHistory&&<div className="overlay" onClick={()=>setChangeHistory(null)}><section className="modal" role="dialog" aria-modal="true" aria-label="異動編修紀錄" onClick={e=>e.stopPropagation()}><header><h2>異動編修紀錄</h2><button className="icon-btn" aria-label="關閉紀錄" onClick={()=>setChangeHistory(null)}><X/></button></header><p>目前原因：{changeHistory.reason}</p>{(changeHistory.edit_history||[]).map((h,i)=><div className="panel" key={i}><strong>{stamp(h.edited_at)} · {userName(h.edited_by)}</strong><p className="note">編修前：{h.before.reason}</p>{h.before.starts_at&&<p>原時間：{stamp(h.before.starts_at)} — {stamp(h.before.ends_at)}</p>}{h.before.effective_date&&<p>原生效日：{h.before.effective_date}</p>}<p>原授課教師：{userName(h.before.teacher_id)} · 原節數：{h.before.units??'—'} · 原費率：{h.before.rate??'—'}</p></div>)}</section></div>}{issued&&<div className="overlay"><section className="modal" role="dialog" aria-modal="true" aria-label="校用帳號已建立"><header><h2>校用帳號已建立</h2></header><p>登入帳號 <strong>{issued.username}</strong></p><p>初始密碼 <code>{issued.initial_password}</code></p><p className="note">初始密碼只顯示這一次，請直接交付帳號持有人。</p><footer><button className="btn primary" onClick={()=>setIssued(null)}>完成</button></footer></section></div>}{modal&&<FormModal key={modal.title} spec={modal} close={()=>!busy&&setModal(null)} busy={busy}/>} {toast&&<div className={'toast '+(toast.error?'error':'')} role="alert">{toast.message}</div>}</div>;
 }
 createRoot(document.getElementById('root')).render(<App/>);

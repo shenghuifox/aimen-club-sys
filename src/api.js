@@ -1,4 +1,5 @@
 import {createClient} from '@supabase/supabase-js';
+import {schoolEmail} from '../supabase/functions/club-account-admin/school-auth.js';
 import {seed,demoAction} from './demo.js';
 const env=import.meta.env;
 export const configured=Boolean(env.VITE_SUPABASE_URL&&env.VITE_SUPABASE_PUBLISHABLE_KEY);
@@ -34,12 +35,8 @@ export async function runAction(mode,data,user,action,payload) {
   return {snapshot};
  }
  if(action==='account_credentials'){
-  const {data:change,error}=await supabase.functions.invoke('club-account-admin',{body:payload});
-  if(error) {
-   const detail=await error.context?.json?.().catch(()=>null);
-   throw Error(detail?.error||'帳號服務無法使用，請聯絡學校。');
-  }
-  return {snapshot:await getSnapshot(),result:change};
+  const result=await callAccountService(payload);
+  return {snapshot:payload.action==='create_school'?data:await getSnapshot(),result};
  }
  const dedicated=RPC_ACTIONS.has(action);
  const {data:result,error}=await supabase.rpc(dedicated?'club_'+action:rpcByAction.get(action)||'club_action',dedicated?{payload}:{action,payload});
@@ -48,4 +45,29 @@ export async function runAction(mode,data,user,action,payload) {
  return {snapshot:await getSnapshot(),result};
 }
 
-export async function login(username,password){username=username.trim();const email=username.includes('@')?username:`${username}@test.aimen.invalid`;const {data,error}=await supabase.auth.signInWithPassword({email,password});if(error)throw Error('登入失敗，請確認帳號與密碼；若帳號尚未建立，請聯絡管理者。');return data;}
+export async function schoolPasswordRequired(){
+ const {data,error}=await supabase.rpc('club_school_password_required');
+ if(error)throw error;
+ return data;
+}
+
+export async function callAccountService(payload){
+ const {data,error}=await supabase.functions.invoke('club-account-admin',{body:payload});
+ if(error){
+  const detail=await error.context?.json?.().catch(()=>null);
+  throw Error(detail?.error||'帳號服務無法使用，請聯絡學校。');
+ }
+ return data;
+}
+
+export async function login(username,password){
+ const account=username.trim();
+ const legacy=account.includes('@')?account:`${account}@test.aimen.invalid`;
+ const email=schoolEmail(account)||legacy;
+ let {data,error}=await supabase.auth.signInWithPassword({email,password});
+ if(error?.code==='invalid_credentials'&&email!==legacy){
+  ({data,error}=await supabase.auth.signInWithPassword({email:legacy,password}));
+ }
+ if(error)throw Error('登入失敗，請確認帳號與密碼；如需協助，請聯絡學校。');
+ return data;
+}
